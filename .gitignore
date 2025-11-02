@@ -1,0 +1,52 @@
+# 依賴
+node_modules/
+package-lock.json
+yarn.lock
+
+# 環境變數
+.env
+.env.local
+.env.*.local
+
+# 日誌
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 測試
+coverage/
+.nyc_output/
+
+# 臨時文件
+tmp/
+temp/
+*.tmp
+
+# 上傳的圖片
+uploads/
+test-images/
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# 生成的報告
+report.html
+*.pdf
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Heroku
+.heroku/
