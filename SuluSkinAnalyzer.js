@@ -135,6 +135,9 @@ class SuluSkinAnalyzer {
 
       const startTime = Date.now();
       console.log(`🔄 嘗試連接 API (${retryCount + 1}/${this.maxRetries})...`);
+      console.log(`   - URL: ${this.baseURL}${this.endpoint}`);
+      console.log(`   - Image size: ${imageBuffer.length} bytes`);
+      console.log(`   - API Key 長度: ${this.apiKey ? this.apiKey.length : 0}`);
 
       const response = await axios.post(
         `${this.baseURL}${this.endpoint}`,
@@ -154,7 +157,26 @@ class SuluSkinAnalyzer {
       const duration = Date.now() - startTime;
       console.log(`✅ API 回應成功 (${duration}ms)`);
       console.log(`   - Status: ${response.status}`);
-      console.log(`   - Data:`, JSON.stringify(response.data).substring(0, 200));
+      console.log(`   - Data:`, JSON.stringify(response.data).substring(0, 500));
+
+      // 檢查 HTTP 狀態碼
+      if (response.status !== 200) {
+        console.error(`❌ HTTP 錯誤狀態: ${response.status}`);
+        return {
+          success: false,
+          error: {
+            code: response.status,
+            message: response.data.error_msg || response.statusText || 'HTTP Error',
+            detail: response.data.error_detail || response.data,
+            type: 'HTTP_ERROR',
+            http_status: response.status
+          },
+          metadata: {
+            request_id: response.data.request_id,
+            log_id: response.data.log_id
+          }
+        };
+      }
 
       return this.processResponse(response.data);
     } catch (error) {
@@ -275,13 +297,19 @@ class SuluSkinAnalyzer {
    * @returns {Object} 處理後的結果
    */
   processResponse(data) {
+    console.log('📝 處理 API 回應...');
+    console.log('   - error_code:', data.error_code);
+    console.log('   - error_msg:', data.error_msg);
+    
     // 檢查錯誤 (AILabTools 使用 error_code)
-    if (data.error_code !== 0) {
+    // error_code 為 0 表示成功
+    if (data.error_code !== undefined && data.error_code !== 0) {
+      console.error(`❌ API 返回錯誤: code=${data.error_code}, msg=${data.error_msg}`);
       return {
         success: false,
         error: {
           code: data.error_code,
-          message: data.error_msg || 'Unknown error',
+          message: data.error_msg || 'Unknown API error',
           detail: data.error_detail || {},
           error_code_str: data.error_code_str
         },
@@ -292,6 +320,25 @@ class SuluSkinAnalyzer {
       };
     }
 
+    // 檢查是否有 result 欄位
+    if (!data.result) {
+      console.error(`❌ API 回應缺少 result 欄位`);
+      return {
+        success: false,
+        error: {
+          code: 'MISSING_RESULT',
+          message: 'API response is missing result field',
+          detail: data
+        },
+        metadata: {
+          request_id: data.request_id,
+          log_id: data.log_id
+        }
+      };
+    }
+
+    console.log('✅ API 回應正常，開始轉換格式...');
+    
     // 成功回應 - 轉換 AILabTools 格式為統一格式
     const result = this.convertAILabToUnifiedFormat(data.result || {});
 
