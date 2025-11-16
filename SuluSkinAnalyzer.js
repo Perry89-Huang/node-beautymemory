@@ -15,8 +15,9 @@ class SuluSkinAnalyzer {
   /**
    * 初始化分析器
    * @param {string} apiKey - API 金鑰(可選,會從環境變數讀取)
+   * @param {string} version - API 版本 ('basic' 或 'advanced'，默認 'advanced')
    */
-  constructor(apiKey = null) {
+  constructor(apiKey = null, version = 'advanced') {
     // 支援兩種環境變數名稱(向後兼容)
     this.apiKey = apiKey || process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
     
@@ -24,9 +25,16 @@ class SuluSkinAnalyzer {
       throw new Error('API Key is required. Set AILAB_API_KEY (or SULU_API_KEY) environment variable or pass it to constructor.');
     }
     
+    // 設置 API 版本
+    this.version = version === 'basic' ? 'basic' : 'advanced';
+    
     // AILabTools API 配置
     this.baseURL = 'https://www.ailabapi.com';
-    this.endpoint = '/api/portrait/analysis/skin-analysis-advanced';
+    this.endpoints = {
+      basic: '/api/portrait/analysis/skin-analysis',
+      advanced: '/api/portrait/analysis/skin-analysis-advanced'
+    };
+    this.endpoint = this.endpoints[this.version];
     this.timeout = 30000; // 30 秒
     this.maxRetries = 3; // 最大重試次數
     this.retryDelay = 1000; // 重試延遲(毫秒)
@@ -35,6 +43,7 @@ class SuluSkinAnalyzer {
     const maskedKey = this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'NOT_SET';
     console.log(`🔧 AILabTools Skin Analyzer 配置:`);
     console.log(`   - Provider: AILabTools (原 Sulu)`);
+    console.log(`   - Version: ${this.version === 'basic' ? '基礎版' : '專業版'} (${this.version})`);
     console.log(`   - Base URL: ${this.baseURL}`);
     console.log(`   - Endpoint: ${this.endpoint}`);
     console.log(`   - API Key: ${maskedKey}`);
@@ -43,11 +52,36 @@ class SuluSkinAnalyzer {
   }
 
   /**
+   * 設置 API 版本
+   * @param {string} version - API 版本 ('basic' 或 'advanced')
+   */
+  setVersion(version) {
+    this.version = version === 'basic' ? 'basic' : 'advanced';
+    this.endpoint = this.endpoints[this.version];
+    console.log(`🔄 切換到 ${this.version === 'basic' ? '基礎版' : '專業版'} API`);
+  }
+
+  /**
+   * 獲取當前 API 版本
+   * @returns {string} 當前版本
+   */
+  getVersion() {
+    return this.version;
+  }
+
+  /**
    * 從本地檔案路徑分析肌膚
    * @param {string} imagePath - 圖片檔案路徑
+   * @param {string} version - API 版本 (可選，覆蓋默認版本)
    * @returns {Promise<Object>} 分析結果
    */
-  async analyzeFromPath(imagePath) {
+  async analyzeFromPath(imagePath, version = null) {
+    // 臨時切換版本
+    const originalVersion = this.version;
+    if (version) {
+      this.setVersion(version);
+    }
+    
     try {
       // 驗證檔案存在
       if (!fs.existsSync(imagePath)) {
@@ -60,11 +94,12 @@ class SuluSkinAnalyzer {
         throw new Error('Only JPG/JPEG format is supported');
       }
 
-      // 驗證檔案大小 (5MB)
+      // 驗證檔案大小 (基礎版 2MB，專業版 5MB)
+      const maxSize = this.version === 'basic' ? 2 : 5;
       const stats = fs.statSync(imagePath);
       const sizeInMB = stats.size / (1024 * 1024);
-      if (sizeInMB > 5) {
-        throw new Error(`Image size (${sizeInMB.toFixed(2)} MB) exceeds 5 MB limit`);
+      if (sizeInMB > maxSize) {
+        throw new Error(`Image size (${sizeInMB.toFixed(2)} MB) exceeds ${maxSize} MB limit for ${this.version} version`);
       }
 
       // 建立 FormData
@@ -89,6 +124,11 @@ class SuluSkinAnalyzer {
       return this.processResponse(response.data);
     } catch (error) {
       return this.handleError(error);
+    } finally {
+      // 恢復原始版本
+      if (version && originalVersion !== version) {
+        this.setVersion(originalVersion);
+      }
     }
   }
 
@@ -96,14 +136,22 @@ class SuluSkinAnalyzer {
    * 從 Buffer 分析肌膚
    * @param {Buffer} imageBuffer - 圖片 Buffer
    * @param {string} filename - 檔案名稱 (可選)
+   * @param {string} version - API 版本 (可選，覆蓋默認版本)
    * @returns {Promise<Object>} 分析結果
    */
-  async analyzeFromBuffer(imageBuffer, filename = 'image.jpg') {
+  async analyzeFromBuffer(imageBuffer, filename = 'image.jpg', version = null) {
+    // 臨時切換版本
+    const originalVersion = this.version;
+    if (version) {
+      this.setVersion(version);
+    }
+    
     try {
-      // 驗證 Buffer 大小
+      // 驗證 Buffer 大小 (基礎版 2MB，專業版 5MB)
+      const maxSize = this.version === 'basic' ? 2 : 5;
       const sizeInMB = imageBuffer.length / (1024 * 1024);
-      if (sizeInMB > 5) {
-        throw new Error(`Image size (${sizeInMB.toFixed(2)} MB) exceeds 5 MB limit`);
+      if (sizeInMB > maxSize) {
+        throw new Error(`Image size (${sizeInMB.toFixed(2)} MB) exceeds ${maxSize} MB limit for ${this.version} version`);
       }
 
       console.log(`📤 準備發送 API 請求:`);
@@ -115,6 +163,11 @@ class SuluSkinAnalyzer {
       return await this.makeRequestWithRetry(imageBuffer, filename);
     } catch (error) {
       return this.handleError(error);
+    } finally {
+      // 恢復原始版本
+      if (version && originalVersion !== version) {
+        this.setVersion(originalVersion);
+      }
     }
   }
 
@@ -363,6 +416,118 @@ class SuluSkinAnalyzer {
    * @returns {Object} 統一格式
    */
   convertAILabToUnifiedFormat(ailabResult) {
+    // 根據版本選擇不同的轉換方法
+    if (this.version === 'basic') {
+      return this.convertBasicToUnifiedFormat(ailabResult);
+    } else {
+      return this.convertAdvancedToUnifiedFormat(ailabResult);
+    }
+  }
+
+  /**
+   * 將基礎版格式轉換為統一格式
+   * @param {Object} basicResult - 基礎版 API 回應
+   * @returns {Object} 統一格式
+   */
+  convertBasicToUnifiedFormat(basicResult) {
+    return {
+      // 基礎版沒有膚色、膚齡等詳細數據
+      skin_color: null,
+      skin_age: null,
+      skin_texture: basicResult.skin_type ? {
+        type: basicResult.skin_type.skin_type,
+        details: basicResult.skin_type.details,
+        score: this.calculateSkinTypeScore(basicResult.skin_type)
+      } : null,
+      // 雙眼皮
+      double_eyelid: {
+        left: basicResult.left_eyelids,
+        right: basicResult.right_eyelids
+      },
+      // 眼袋 (基礎版只有 0/1)
+      eye_bags: {
+        value: basicResult.eye_pouch?.value,
+        confidence: basicResult.eye_pouch?.confidence,
+        score: this.convertToScore(1 - (basicResult.eye_pouch?.value || 0))
+      },
+      // 黑眼圈 (基礎版只有 0/1)
+      dark_circles: {
+        value: basicResult.dark_circle?.value,
+        confidence: basicResult.dark_circle?.confidence,
+        score: this.convertToScore(1 - (basicResult.dark_circle?.value || 0))
+      },
+      // 皺紋
+      wrinkles: {
+        forehead: {
+          value: basicResult.forehead_wrinkle?.value,
+          confidence: basicResult.forehead_wrinkle?.confidence,
+          score: this.convertToScore(1 - (basicResult.forehead_wrinkle?.value || 0))
+        },
+        eye_corner: {
+          value: basicResult.crows_feet?.value,
+          confidence: basicResult.crows_feet?.confidence,
+          score: this.convertToScore(1 - (basicResult.crows_feet?.value || 0))
+        },
+        eye_finelines: {
+          value: basicResult.eye_finelines?.value,
+          confidence: basicResult.eye_finelines?.confidence,
+          score: this.convertToScore(1 - (basicResult.eye_finelines?.value || 0))
+        },
+        glabella: {
+          value: basicResult.glabella_wrinkle?.value,
+          confidence: basicResult.glabella_wrinkle?.confidence,
+          score: this.convertToScore(1 - (basicResult.glabella_wrinkle?.value || 0))
+        },
+        nasolabial: {
+          value: basicResult.nasolabial_fold?.value,
+          confidence: basicResult.nasolabial_fold?.confidence,
+          score: this.convertToScore(1 - (basicResult.nasolabial_fold?.value || 0))
+        }
+      },
+      // 毛孔
+      pores: {
+        forehead: basicResult.pores_forehead,
+        left_cheek: basicResult.pores_left_cheek,
+        right_cheek: basicResult.pores_right_cheek,
+        jaw: basicResult.pores_jaw
+      },
+      // 黑頭 (基礎版只有 0/1)
+      blackhead: basicResult.blackhead,
+      // 痘痘 (基礎版只有 0/1，無位置信息)
+      acne: {
+        value: basicResult.acne?.value,
+        confidence: basicResult.acne?.confidence,
+        count: basicResult.acne?.value || 0,
+        score: this.convertToScore(1 - (basicResult.acne?.value || 0))
+      },
+      // 痣 (基礎版只有 0/1)
+      mole: {
+        value: basicResult.mole?.value,
+        confidence: basicResult.mole?.confidence,
+        count: basicResult.mole?.value || 0
+      },
+      // 斑點 (基礎版只有 0/1)
+      spots: {
+        value: basicResult.skin_spot?.value,
+        confidence: basicResult.skin_spot?.confidence,
+        count: basicResult.skin_spot?.value || 0,
+        score: this.convertToScore(1 - (basicResult.skin_spot?.value || 0))
+      },
+      // 基礎版沒有這些數據
+      closed_comedones: null,
+      sensitivity: null,
+      skintone_ita: null,
+      skin_hue_ha: null,
+      face_maps: null
+    };
+  }
+
+  /**
+   * 將專業版格式轉換為統一格式
+   * @param {Object} ailabResult - 專業版 API 回應
+   * @returns {Object} 統一格式
+   */
+  convertAdvancedToUnifiedFormat(ailabResult) {
     return {
       // 膚色 (轉換為評分制)
       skin_color: {

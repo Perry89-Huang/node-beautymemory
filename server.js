@@ -64,7 +64,9 @@ let analyzer;
 try {
   // 支援兩種環境變數名稱 (AILAB_API_KEY 優先，向後兼容 SULU_API_KEY)
   const apiKey = process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
-  analyzer = new SuluSkinAnalyzer(apiKey);
+  // 從環境變數讀取版本，默認為 advanced
+  const apiVersion = process.env.SKIN_ANALYSIS_VERSION || 'advanced';
+  analyzer = new SuluSkinAnalyzer(apiKey, apiVersion);
   console.log('✅ AILabTools Skin Analyzer 初始化成功');
 } catch (error) {
   console.error('❌ Analyzer 初始化失敗:', error.message);
@@ -100,7 +102,8 @@ app.get('/api/diagnostics', async (req, res) => {
       initialized: !!analyzer,
       api_key_set: !!(process.env.AILAB_API_KEY || process.env.SULU_API_KEY),
       api_key_length: (process.env.AILAB_API_KEY || process.env.SULU_API_KEY || '').length,
-      api_provider: 'AILabTools'
+      api_provider: 'AILabTools',
+      api_version: analyzer ? analyzer.getVersion() : null
     },
     network: {
       hostname: require('os').hostname(),
@@ -176,12 +179,19 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
       });
     }
 
+    // 從 query 或 body 獲取版本參數 (可選)
+    const version = req.query.version || req.body.version || null;
+    
     console.log(`開始分析圖片: ${req.file.originalname} (${req.file.size} bytes)`);
+    if (version) {
+      console.log(`使用 API 版本: ${version}`);
+    }
 
-    // 使用 Buffer 進行分析
+    // 使用 Buffer 進行分析，並傳遞版本參數
     const result = await analyzer.analyzeFromBuffer(
       req.file.buffer,
-      req.file.originalname
+      req.file.originalname,
+      version
     );
 
     // 如果分析成功,生成摘要
@@ -196,7 +206,10 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
           analysis: result.data,
           summary: summary
         },
-        metadata: result.metadata
+        metadata: {
+          ...result.metadata,
+          api_version: version || analyzer.getVersion()
+        }
       });
     } else {
       console.error(`❌ 分析失敗: ${result.error.message}`);
@@ -219,7 +232,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
 // POST /api/analyze-base64 - 分析圖片(Base64)
 app.post('/api/analyze-base64', async (req, res) => {
   try {
-    const { imageData } = req.body;
+    const { imageData, version } = req.body;
 
     if (!imageData) {
       return res.status(400).json({
@@ -242,8 +255,15 @@ app.post('/api/analyze-base64', async (req, res) => {
     }
 
     console.log('開始分析 Base64 圖片');
+    if (version) {
+      console.log(`使用 API 版本: ${version}`);
+    }
 
-    const result = await analyzer.analyzeFromBase64(imageData);
+    // 轉換 Base64 為 Buffer
+    const base64Data = imageData.replace(/^data:image\/\w+;base64,/, '');
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+    
+    const result = await analyzer.analyzeFromBuffer(imageBuffer, 'base64-image.jpg', version);
 
     if (result.success) {
       const summary = analyzer.generateSummary(result);
@@ -256,7 +276,10 @@ app.post('/api/analyze-base64', async (req, res) => {
           analysis: result.data,
           summary: summary
         },
-        metadata: result.metadata
+        metadata: {
+          ...result.metadata,
+          api_version: version || analyzer.getVersion()
+        }
       });
     } else {
       console.error(`❌ 分析失敗: ${result.error.message}`);
