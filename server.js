@@ -62,11 +62,13 @@ const upload = multer({
 
 let analyzer;
 try {
-  analyzer = new SuluSkinAnalyzer(process.env.SULU_API_KEY);
-  console.log('✅ Sulu Skin Analyzer 初始化成功');
+  // 支援兩種環境變數名稱 (AILAB_API_KEY 優先，向後兼容 SULU_API_KEY)
+  const apiKey = process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
+  analyzer = new SuluSkinAnalyzer(apiKey);
+  console.log('✅ AILabTools Skin Analyzer 初始化成功');
 } catch (error) {
   console.error('❌ Analyzer 初始化失敗:', error.message);
-  console.error('請確認 SULU_API_KEY 環境變數已設定');
+  console.error('請確認 AILAB_API_KEY (或 SULU_API_KEY) 環境變數已設定');
 }
 
 // ==========================================
@@ -84,6 +86,54 @@ app.get('/health', (req, res) => {
   });
 });
 
+// API 診斷端點
+app.get('/api/diagnostics', async (req, res) => {
+  const diagnostics = {
+    timestamp: new Date().toISOString(),
+    server: {
+      status: 'running',
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      node_version: process.version
+    },
+    analyzer: {
+      initialized: !!analyzer,
+      api_key_set: !!(process.env.AILAB_API_KEY || process.env.SULU_API_KEY),
+      api_key_length: (process.env.AILAB_API_KEY || process.env.SULU_API_KEY || '').length,
+      api_provider: 'AILabTools'
+    },
+    network: {
+      hostname: require('os').hostname(),
+      platform: process.platform
+    }
+  };
+
+  // 測試 API 連接(可選)
+  if (analyzer && req.query.test === 'true') {
+    try {
+      const axios = require('axios');
+      const testStart = Date.now();
+      
+      // 簡單的 ping 測試
+      await axios.get('https://www.ailabapi.com', {
+        timeout: 5000,
+        validateStatus: () => true
+      });
+      
+      diagnostics.network.api_reachable = true;
+      diagnostics.network.api_response_time = Date.now() - testStart;
+    } catch (error) {
+      diagnostics.network.api_reachable = false;
+      diagnostics.network.api_error = {
+        code: error.code,
+        message: error.message
+      };
+    }
+  }
+
+  res.json(diagnostics);
+});
+
 // 首頁
 app.get('/', (req, res) => {
   res.json({
@@ -92,6 +142,7 @@ app.get('/', (req, res) => {
     description: '專業的 AI 肌膚分析服務',
     endpoints: {
       health: 'GET /health',
+      diagnostics: 'GET /api/diagnostics?test=true',
       analyze: 'POST /api/analyze',
       analyzeBase64: 'POST /api/analyze-base64',
       estimateCost: 'GET /api/estimate-cost'
@@ -395,6 +446,7 @@ app.listen(PORT, () => {
   console.log('================================');
   console.log('可用端點:');
   console.log(`  GET  /health           - 健康檢查`);
+  console.log(`  GET  /api/diagnostics  - 系統診斷`);
   console.log(`  POST /api/analyze      - 分析圖片(檔案上傳)`);
   console.log(`  POST /api/analyze-base64 - 分析圖片(Base64)`);
   console.log(`  GET  /api/estimate-cost - 成本估算`);

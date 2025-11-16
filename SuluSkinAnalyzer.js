@@ -1,6 +1,6 @@
-// SuluSkinAnalyzer.js
-// 美魔力 × Sulu Skin Analyze API 整合
-// 版本: 1.0.0
+// SuluSkinAnalyzer.js (now using AILabTools)
+// 美魔力 × AILabTools Skin Analyze API 整合
+// 版本: 2.0.0
 
 const axios = require('axios');
 const FormData = require('form-data');
@@ -8,7 +8,8 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Sulu Skin Analyze API 的 Node.js 封裝類別
+ * AILabTools Skin Analyze API 的 Node.js 封裝類別
+ * (原 Sulu API 已關閉，改用 AILabTools)
  */
 class SuluSkinAnalyzer {
   /**
@@ -16,15 +17,29 @@ class SuluSkinAnalyzer {
    * @param {string} apiKey - API 金鑰(可選,會從環境變數讀取)
    */
   constructor(apiKey = null) {
-    this.apiKey = apiKey || process.env.SULU_API_KEY;
+    // 支援兩種環境變數名稱(向後兼容)
+    this.apiKey = apiKey || process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
     
     if (!this.apiKey) {
-      throw new Error('API Key is required. Set SULU_API_KEY environment variable or pass it to constructor.');
+      throw new Error('API Key is required. Set AILAB_API_KEY (or SULU_API_KEY) environment variable or pass it to constructor.');
     }
     
-    this.baseURL = 'https://skin-analyze.p.sulu.sh';
-    this.endpoint = '/portrait/analysis/skinanalyze';
+    // AILabTools API 配置
+    this.baseURL = 'https://www.ailabapi.com';
+    this.endpoint = '/api/portrait/analysis/skin-analysis-advanced';
     this.timeout = 30000; // 30 秒
+    this.maxRetries = 3; // 最大重試次數
+    this.retryDelay = 1000; // 重試延遲(毫秒)
+    
+    // 日誌配置(隱藏 API Key 的前綴)
+    const maskedKey = this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'NOT_SET';
+    console.log(`🔧 AILabTools Skin Analyzer 配置:`);
+    console.log(`   - Provider: AILabTools (原 Sulu)`);
+    console.log(`   - Base URL: ${this.baseURL}`);
+    console.log(`   - Endpoint: ${this.endpoint}`);
+    console.log(`   - API Key: ${maskedKey}`);
+    console.log(`   - Timeout: ${this.timeout}ms`);
+    console.log(`   - Max Retries: ${this.maxRetries}`);
   }
 
   /**
@@ -91,28 +106,130 @@ class SuluSkinAnalyzer {
         throw new Error(`Image size (${sizeInMB.toFixed(2)} MB) exceeds 5 MB limit`);
       }
 
+      console.log(`📤 準備發送 API 請求:`);
+      console.log(`   - File: ${filename}`);
+      console.log(`   - Size: ${sizeInMB.toFixed(2)} MB`);
+      console.log(`   - URL: ${this.baseURL}${this.endpoint}`);
+
+      // 使用重試機制
+      return await this.makeRequestWithRetry(imageBuffer, filename);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * 發送 API 請求(帶重試機制)
+   * @param {Buffer} imageBuffer - 圖片 Buffer
+   * @param {string} filename - 檔案名稱
+   * @param {number} retryCount - 當前重試次數
+   * @returns {Promise<Object>} 分析結果
+   */
+  async makeRequestWithRetry(imageBuffer, filename, retryCount = 0) {
+    try {
       const formData = new FormData();
       formData.append('image', imageBuffer, {
         filename: filename,
         contentType: 'image/jpeg'
       });
 
+      const startTime = Date.now();
+      console.log(`🔄 嘗試連接 API (${retryCount + 1}/${this.maxRetries})...`);
+
       const response = await axios.post(
         `${this.baseURL}${this.endpoint}`,
         formData,
         {
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
+            'ailabapi-api-key': this.apiKey,
             ...formData.getHeaders()
           },
-          timeout: this.timeout
+          timeout: this.timeout,
+          validateStatus: function (status) {
+            return status < 500; // 只對 5xx 錯誤拋出異常
+          }
         }
       );
 
+      const duration = Date.now() - startTime;
+      console.log(`✅ API 回應成功 (${duration}ms)`);
+      console.log(`   - Status: ${response.status}`);
+      console.log(`   - Data:`, JSON.stringify(response.data).substring(0, 200));
+
       return this.processResponse(response.data);
     } catch (error) {
-      return this.handleError(error);
+      const duration = Date.now() - startTime;
+      console.error(`❌ API 請求失敗 (${duration}ms):`);
+      console.error(`   - Error Type: ${error.code || 'UNKNOWN'}`);
+      console.error(`   - Message: ${error.message}`);
+      
+      if (error.response) {
+        console.error(`   - Response Status: ${error.response.status}`);
+        console.error(`   - Response Data:`, error.response.data);
+      } else if (error.request) {
+        console.error(`   - No Response Received`);
+        console.error(`   - Request Config:`, {
+          url: error.config?.url,
+          method: error.config?.method,
+          timeout: error.config?.timeout
+        });
+      }
+
+      // 檢查是否應該重試
+      const shouldRetry = this.shouldRetry(error, retryCount);
+      
+      if (shouldRetry) {
+        const delay = this.retryDelay * Math.pow(2, retryCount); // 指數退避
+        console.log(`⏳ ${delay}ms 後重試...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.makeRequestWithRetry(imageBuffer, filename, retryCount + 1);
+      }
+
+      throw error;
     }
+  }
+
+  /**
+   * 判斷是否應該重試
+   * @param {Error} error - 錯誤物件
+   * @param {number} retryCount - 當前重試次數
+   * @returns {boolean} 是否應該重試
+   */
+  shouldRetry(error, retryCount) {
+    // 已達最大重試次數
+    if (retryCount >= this.maxRetries - 1) {
+      console.log(`⚠️ 已達最大重試次數 (${this.maxRetries})`);
+      return false;
+    }
+
+    // 網路錯誤或超時 - 應該重試
+    if (error.code === 'ECONNABORTED' ||
+        error.code === 'ETIMEDOUT' ||
+        error.code === 'ECONNRESET' ||
+        error.code === 'ENOTFOUND' ||
+        error.code === 'ENETUNREACH' ||
+        error.code === 'EAI_AGAIN' ||
+        error.message.includes('timeout') ||
+        error.message.includes('connect')) {
+      console.log(`🔄 網路錯誤,可以重試`);
+      return true;
+    }
+
+    // 5xx 伺服器錯誤 - 應該重試
+    if (error.response && error.response.status >= 500) {
+      console.log(`🔄 伺服器錯誤 (${error.response.status}),可以重試`);
+      return true;
+    }
+
+    // 429 Too Many Requests - 應該重試
+    if (error.response && error.response.status === 429) {
+      console.log(`🔄 請求過於頻繁 (429),可以重試`);
+      return true;
+    }
+
+    // 其他錯誤(4xx 客戶端錯誤) - 不應該重試
+    console.log(`⛔ 客戶端錯誤,不重試`);
+    return false;
   }
 
   /**
@@ -158,14 +275,15 @@ class SuluSkinAnalyzer {
    * @returns {Object} 處理後的結果
    */
   processResponse(data) {
-    // 檢查錯誤
+    // 檢查錯誤 (AILabTools 使用 error_code)
     if (data.error_code !== 0) {
       return {
         success: false,
         error: {
           code: data.error_code,
           message: data.error_msg || 'Unknown error',
-          detail: data.error_detail
+          detail: data.error_detail || {},
+          error_code_str: data.error_code_str
         },
         metadata: {
           request_id: data.request_id,
@@ -174,11 +292,13 @@ class SuluSkinAnalyzer {
       };
     }
 
-    // 成功回應
+    // 成功回應 - 轉換 AILabTools 格式為統一格式
+    const result = this.convertAILabToUnifiedFormat(data.result || {});
+
     return {
       success: true,
       data: {
-        result: data.result || {},
+        result: result,
         face_rectangle: data.face_rectangle || {},
         warnings: data.warning || []
       },
@@ -191,43 +311,274 @@ class SuluSkinAnalyzer {
   }
 
   /**
+   * 將 AILabTools 格式轉換為統一格式
+   * @param {Object} ailabResult - AILabTools API 回應
+   * @returns {Object} 統一格式
+   */
+  convertAILabToUnifiedFormat(ailabResult) {
+    return {
+      // 膚色 (轉換為評分制)
+      skin_color: {
+        value: ailabResult.skin_color?.value,
+        confidence: ailabResult.skin_color?.confidence,
+        score: this.convertToScore(ailabResult.skin_color?.confidence)
+      },
+      // 膚齡
+      skin_age: {
+        value: ailabResult.skin_age?.value,
+        score: this.calculateAgeScore(ailabResult.skin_age?.value)
+      },
+      // 膚質
+      skin_texture: ailabResult.skin_type ? {
+        type: ailabResult.skin_type.skin_type,
+        details: ailabResult.skin_type.details,
+        score: this.calculateSkinTypeScore(ailabResult.skin_type)
+      } : null,
+      // 雙眼皮
+      double_eyelid: {
+        left: ailabResult.left_eyelids,
+        right: ailabResult.right_eyelids
+      },
+      // 眼袋
+      eye_bags: {
+        value: ailabResult.eye_pouch?.value,
+        severity: ailabResult.eye_pouch_severity,
+        confidence: ailabResult.eye_pouch?.confidence,
+        score: this.convertToScore(1 - (ailabResult.eye_pouch?.value || 0))
+      },
+      // 黑眼圈
+      dark_circles: {
+        value: ailabResult.dark_circle?.value,
+        confidence: ailabResult.dark_circle?.confidence,
+        score: this.convertToScore(1 - (ailabResult.dark_circle?.value > 0 ? 0.5 : 0))
+      },
+      // 皺紋
+      wrinkles: {
+        forehead: {
+          value: ailabResult.forehead_wrinkle?.value,
+          confidence: ailabResult.forehead_wrinkle?.confidence,
+          score: this.convertToScore(1 - (ailabResult.forehead_wrinkle?.value || 0))
+        },
+        eye_corner: {
+          value: ailabResult.crows_feet?.value,
+          confidence: ailabResult.crows_feet?.confidence,
+          score: this.convertToScore(1 - (ailabResult.crows_feet?.value || 0))
+        },
+        eye_finelines: {
+          value: ailabResult.eye_finelines?.value,
+          confidence: ailabResult.eye_finelines?.confidence,
+          score: this.convertToScore(1 - (ailabResult.eye_finelines?.value || 0))
+        },
+        glabella: {
+          value: ailabResult.glabella_wrinkle?.value,
+          confidence: ailabResult.glabella_wrinkle?.confidence,
+          score: this.convertToScore(1 - (ailabResult.glabella_wrinkle?.value || 0))
+        },
+        nasolabial: {
+          value: ailabResult.nasolabial_fold?.value,
+          severity: ailabResult.nasolabial_fold_severity,
+          confidence: ailabResult.nasolabial_fold?.confidence,
+          score: this.convertToScore(1 - (ailabResult.nasolabial_fold?.value || 0))
+        }
+      },
+      // 毛孔
+      pores: {
+        forehead: ailabResult.pores_forehead,
+        left_cheek: ailabResult.pores_left_cheek,
+        right_cheek: ailabResult.pores_right_cheek,
+        jaw: ailabResult.pores_jaw
+      },
+      // 黑頭
+      blackhead: ailabResult.blackhead,
+      // 痘痘
+      acne: {
+        rectangle: ailabResult.acne?.rectangle || [],
+        confidence: ailabResult.acne?.confidence || [],
+        count: (ailabResult.acne?.rectangle || []).length,
+        score: this.calculateBlemishScore(ailabResult.acne?.rectangle || [])
+      },
+      // 閉口
+      closed_comedones: {
+        rectangle: ailabResult.closed_comedones?.rectangle || [],
+        confidence: ailabResult.closed_comedones?.confidence || [],
+        count: (ailabResult.closed_comedones?.rectangle || []).length
+      },
+      // 痣
+      mole: {
+        rectangle: ailabResult.mole?.rectangle || [],
+        confidence: ailabResult.mole?.confidence || [],
+        count: (ailabResult.mole?.rectangle || []).length
+      },
+      // 斑點
+      spots: {
+        rectangle: ailabResult.skin_spot?.rectangle || [],
+        confidence: ailabResult.skin_spot?.confidence || [],
+        count: (ailabResult.skin_spot?.rectangle || []).length,
+        score: this.calculateBlemishScore(ailabResult.skin_spot?.rectangle || [])
+      },
+      // 敏感度 (如果有返回)
+      sensitivity: ailabResult.sensitivity,
+      // 膚色標準
+      skintone_ita: ailabResult.skintone_ita,
+      skin_hue_ha: ailabResult.skin_hue_ha,
+      // 臉部色度圖
+      face_maps: ailabResult.face_maps
+    };
+  }
+
+  /**
+   * 將信心度轉換為評分 (0-100)
+   * @param {number} confidence - 信心度 (0-1)
+   * @returns {number} 評分 (0-100)
+   */
+  convertToScore(confidence) {
+    if (confidence === undefined || confidence === null) return null;
+    return Math.round(confidence * 100);
+  }
+
+  /**
+   * 根據膚齡計算評分
+   * @param {number} age - 膚齡
+   * @returns {number} 評分 (0-100)
+   */
+  calculateAgeScore(age) {
+    if (!age) return null;
+    // 假設理想膚齡為實際年齡的 80%，年輕 20% 為滿分
+    // 這裡簡化處理，年齡越小分數越高
+    const score = Math.max(0, 100 - age);
+    return Math.min(100, score);
+  }
+
+  /**
+   * 計算膚質評分
+   * @param {Object} skinType - 膚質資料
+   * @returns {number} 評分
+   */
+  calculateSkinTypeScore(skinType) {
+    if (!skinType || !skinType.details) return 70;
+    // 中性肌膚評分最高，其他根據信心度評分
+    const typeScores = {
+      0: 70, // 油性
+      1: 75, // 乾性
+      2: 95, // 中性
+      3: 80  // 混合性
+    };
+    return typeScores[skinType.skin_type] || 70;
+  }
+
+  /**
+   * 根據瑕疵數量計算評分
+   * @param {Array} rectangles - 瑕疵矩形陣列
+   * @returns {number} 評分
+   */
+  calculateBlemishScore(rectangles) {
+    const count = rectangles.length;
+    if (count === 0) return 100;
+    if (count <= 3) return 90;
+    if (count <= 8) return 75;
+    if (count <= 15) return 60;
+    if (count <= 25) return 45;
+    return 30;
+  }
+
+  /**
    * 錯誤處理
    * @param {Error} error - 錯誤物件
    * @returns {Object} 錯誤回應
    */
   handleError(error) {
+    console.error(`🔍 詳細錯誤分析:`);
+    
     if (error.response) {
       // API 回應錯誤
       const data = error.response.data || {};
+      console.error(`   - 類型: API 回應錯誤`);
+      console.error(`   - HTTP Status: ${error.response.status}`);
+      console.error(`   - Response Data:`, data);
+      
       return {
         success: false,
         error: {
           code: error.response.status,
           message: data.error_msg || error.message,
-          detail: data.error_detail
+          detail: data.error_detail,
+          type: 'API_RESPONSE_ERROR'
         },
         metadata: {
           request_id: data.request_id,
-          log_id: data.log_id
+          log_id: data.log_id,
+          http_status: error.response.status
         }
       };
     } else if (error.request) {
-      // 請求發送失敗
+      // 請求發送失敗(網路問題)
+      console.error(`   - 類型: 網路連接錯誤`);
+      console.error(`   - Error Code: ${error.code}`);
+      console.error(`   - Error Message: ${error.message}`);
+      console.error(`   - Target URL: ${this.baseURL}${this.endpoint}`);
+      
+      // 提供更具體的錯誤訊息
+      let specificMessage = 'Failed to connect to API server';
+      let troubleshooting = [];
+      
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        specificMessage = 'API 請求超時,伺服器未在時限內回應';
+        troubleshooting = [
+          '請檢查網路連接是否穩定',
+          '可能是伺服器負載過高',
+          '嘗試稍後再試'
+        ];
+      } else if (error.code === 'ENOTFOUND') {
+        specificMessage = 'DNS 解析失敗,找不到伺服器';
+        troubleshooting = [
+          '請檢查網路連接',
+          '確認 DNS 設定正確',
+          '可能是防火牆阻擋'
+        ];
+      } else if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+        specificMessage = '連接被重置或拒絕';
+        troubleshooting = [
+          '可能是防火牆或代理設定問題',
+          '檢查 Heroku 的網路設定',
+          '確認目標伺服器正在運行'
+        ];
+      } else if (error.code === 'ENETUNREACH') {
+        specificMessage = '網路不可達';
+        troubleshooting = [
+          '檢查網路連接',
+          '可能需要配置代理',
+          '確認沒有網路限制'
+        ];
+      }
+      
       return {
         success: false,
         error: {
-          code: 'NETWORK_ERROR',
-          message: 'Failed to connect to API server',
-          detail: error.message
+          code: error.code || 'NETWORK_ERROR',
+          message: specificMessage,
+          detail: error.message,
+          type: 'NETWORK_ERROR',
+          troubleshooting: troubleshooting,
+          technical: {
+            url: `${this.baseURL}${this.endpoint}`,
+            timeout: `${this.timeout}ms`,
+            error_code: error.code
+          }
         }
       };
     } else {
       // 其他錯誤
+      console.error(`   - 類型: 未知錯誤`);
+      console.error(`   - Message: ${error.message}`);
+      console.error(`   - Stack:`, error.stack);
+      
       return {
         success: false,
         error: {
           code: 'UNKNOWN_ERROR',
-          message: error.message
+          message: error.message,
+          type: 'UNKNOWN_ERROR',
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         }
       };
     }
@@ -350,15 +701,26 @@ class SuluSkinAnalyzer {
     // 收集所有分數
     if (result.skin_color?.score) scores.push(result.skin_color.score);
     if (result.skin_texture?.score) scores.push(result.skin_texture.score);
-    if (result.eye_bags?.score) scores.push(result.eye_bags.score);
-    if (result.dark_circles?.score) scores.push(result.dark_circles.score);
+    if (result.skin_age?.score) scores.push(result.skin_age.score);
+    if (result.eye_bags?.score !== null && result.eye_bags?.score !== undefined) {
+      scores.push(result.eye_bags.score);
+    }
+    if (result.dark_circles?.score !== null && result.dark_circles?.score !== undefined) {
+      scores.push(result.dark_circles.score);
+    }
     if (result.acne?.score) scores.push(result.acne.score);
     if (result.spots?.score) scores.push(result.spots.score);
 
     if (result.wrinkles) {
-      if (result.wrinkles.forehead?.score) scores.push(result.wrinkles.forehead.score);
-      if (result.wrinkles.eye_corner?.score) scores.push(result.wrinkles.eye_corner.score);
-      if (result.wrinkles.nasolabial?.score) scores.push(result.wrinkles.nasolabial.score);
+      if (result.wrinkles.forehead?.score !== null && result.wrinkles.forehead?.score !== undefined) {
+        scores.push(result.wrinkles.forehead.score);
+      }
+      if (result.wrinkles.eye_corner?.score !== null && result.wrinkles.eye_corner?.score !== undefined) {
+        scores.push(result.wrinkles.eye_corner.score);
+      }
+      if (result.wrinkles.nasolabial?.score !== null && result.wrinkles.nasolabial?.score !== undefined) {
+        scores.push(result.wrinkles.nasolabial.score);
+      }
     }
 
     return scores.length > 0
@@ -378,34 +740,67 @@ class SuluSkinAnalyzer {
       medium: 60
     };
 
-    if (result.acne?.score < threshold.high) {
-      const level = result.acne.score < threshold.medium ? '嚴重' : '輕度';
-      concerns.push(`${level}痘痘問題 (${result.acne.count || 0} 處)`);
+    // 痘痘
+    if (result.acne?.count > 0) {
+      const level = result.acne.count > 10 ? '嚴重' : result.acne.count > 5 ? '中度' : '輕度';
+      concerns.push(`${level}痘痘問題 (${result.acne.count} 處)`);
     }
     
-    if (result.spots?.score < threshold.high) {
-      const level = result.spots.score < threshold.medium ? '明顯' : '輕微';
-      concerns.push(`${level}斑點色素沉澱 (${result.spots.count || 0} 處)`);
+    // 斑點
+    if (result.spots?.count > 0) {
+      const level = result.spots.count > 15 ? '明顯' : '輕微';
+      concerns.push(`${level}斑點色素沉澱 (${result.spots.count} 處)`);
     }
     
-    if (result.dark_circles?.score < threshold.medium) {
-      concerns.push('明顯黑眼圈');
+    // 黑眼圈
+    if (result.dark_circles?.value > 0) {
+      const types = ['無', '色素型', '血管型', '陰影型'];
+      const type = types[result.dark_circles.value] || '未知';
+      concerns.push(`黑眼圈 (${type})`);
     }
     
-    if (result.eye_bags?.score < threshold.medium) {
-      concerns.push('眼袋問題');
+    // 眼袋
+    if (result.eye_bags?.value === 1) {
+      const severity = result.eye_bags.severity?.value;
+      const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
+      concerns.push(`${severityText}眼袋問題`);
     }
 
+    // 皺紋
     if (result.wrinkles) {
-      if (result.wrinkles.forehead?.score < threshold.high) {
-        concerns.push(`額頭皺紋 (${result.wrinkles.forehead.count || 0} 條)`);
+      if (result.wrinkles.forehead?.value === 1) {
+        concerns.push('額頭皺紋');
       }
-      if (result.wrinkles.eye_corner?.score < threshold.high) {
-        concerns.push(`魚尾紋 (${result.wrinkles.eye_corner.count || 0} 條)`);
+      if (result.wrinkles.eye_corner?.value === 1) {
+        concerns.push('魚尾紋');
       }
-      if (result.wrinkles.nasolabial?.score < threshold.high) {
-        concerns.push(`法令紋 (${result.wrinkles.nasolabial.count || 0} 條)`);
+      if (result.wrinkles.nasolabial?.value === 1) {
+        const severity = result.wrinkles.nasolabial.severity?.value;
+        const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
+        concerns.push(`${severityText}法令紋`);
       }
+      if (result.wrinkles.eye_finelines?.value === 1) {
+        concerns.push('眼部細紋');
+      }
+      if (result.wrinkles.glabella?.value === 1) {
+        concerns.push('眉間紋');
+      }
+    }
+
+    // 黑頭
+    if (result.blackhead?.value > 0) {
+      const levels = ['無', '輕度', '中度', '嚴重'];
+      concerns.push(`${levels[result.blackhead.value] || ''}黑頭問題`);
+    }
+
+    // 閉口粉刺
+    if (result.closed_comedones?.count > 0) {
+      concerns.push(`閉口粉刺 (${result.closed_comedones.count} 處)`);
+    }
+
+    // 膚齡
+    if (result.skin_age?.value && result.skin_age.value > 40) {
+      concerns.push(`膚齡偏高 (${result.skin_age.value} 歲)`);
     }
 
     return concerns.length > 0 ? concerns : ['肌膚狀況良好 ✨'];
