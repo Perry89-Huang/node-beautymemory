@@ -430,94 +430,54 @@ class SuluSkinAnalyzer {
    * @returns {Object} 統一格式
    */
   convertBasicToUnifiedFormat(basicResult) {
+    // 直接返回 AILabTools API 原始格式，不添加自定義欄位
     return {
-      // 基礎版沒有膚色、膚齡等詳細數據
+      // 膚色 (基礎版無此欄位)
       skin_color: null,
+      // 膚齡 (基礎版無此欄位)
       skin_age: null,
-      skin_texture: basicResult.skin_type ? {
-        type: basicResult.skin_type.skin_type,
-        details: basicResult.skin_type.details,
-        score: this.calculateSkinTypeScore(basicResult.skin_type)
-      } : null,
+      // 膚質
+      skin_type: basicResult.skin_type,
       // 雙眼皮
-      double_eyelid: {
-        left: basicResult.left_eyelids,
-        right: basicResult.right_eyelids
-      },
-      // 眼袋 (基礎版只有 0/1)
-      eye_bags: {
-        value: basicResult.eye_pouch?.value,
-        confidence: basicResult.eye_pouch?.confidence,
-        score: this.convertToScore(1 - (basicResult.eye_pouch?.value || 0))
-      },
-      // 黑眼圈 (基礎版只有 0/1)
-      dark_circles: {
-        value: basicResult.dark_circle?.value,
-        confidence: basicResult.dark_circle?.confidence,
-        score: this.convertToScore(1 - (basicResult.dark_circle?.value || 0))
-      },
-      // 皺紋
-      wrinkles: {
-        forehead: {
-          value: basicResult.forehead_wrinkle?.value,
-          confidence: basicResult.forehead_wrinkle?.confidence,
-          score: this.convertToScore(1 - (basicResult.forehead_wrinkle?.value || 0))
-        },
-        eye_corner: {
-          value: basicResult.crows_feet?.value,
-          confidence: basicResult.crows_feet?.confidence,
-          score: this.convertToScore(1 - (basicResult.crows_feet?.value || 0))
-        },
-        eye_finelines: {
-          value: basicResult.eye_finelines?.value,
-          confidence: basicResult.eye_finelines?.confidence,
-          score: this.convertToScore(1 - (basicResult.eye_finelines?.value || 0))
-        },
-        glabella: {
-          value: basicResult.glabella_wrinkle?.value,
-          confidence: basicResult.glabella_wrinkle?.confidence,
-          score: this.convertToScore(1 - (basicResult.glabella_wrinkle?.value || 0))
-        },
-        nasolabial: {
-          value: basicResult.nasolabial_fold?.value,
-          confidence: basicResult.nasolabial_fold?.confidence,
-          score: this.convertToScore(1 - (basicResult.nasolabial_fold?.value || 0))
-        }
-      },
+      left_eyelids: basicResult.left_eyelids,
+      right_eyelids: basicResult.right_eyelids,
+      // 眼袋
+      eye_pouch: basicResult.eye_pouch,
+      eye_pouch_severity: null, // 基礎版無此欄位
+      // 黑眼圈
+      dark_circle: basicResult.dark_circle,
+      // 額頭皺紋
+      forehead_wrinkle: basicResult.forehead_wrinkle,
+      // 魚尾紋
+      crows_feet: basicResult.crows_feet,
+      // 眼部細紋
+      eye_finelines: basicResult.eye_finelines,
+      // 眉間紋
+      glabella_wrinkle: basicResult.glabella_wrinkle,
+      // 法令紋
+      nasolabial_fold: basicResult.nasolabial_fold,
+      nasolabial_fold_severity: null, // 基礎版無此欄位
       // 毛孔
-      pores: {
-        forehead: basicResult.pores_forehead,
-        left_cheek: basicResult.pores_left_cheek,
-        right_cheek: basicResult.pores_right_cheek,
-        jaw: basicResult.pores_jaw
-      },
-      // 黑頭 (基礎版只有 0/1)
+      pores_forehead: basicResult.pores_forehead,
+      pores_left_cheek: basicResult.pores_left_cheek,
+      pores_right_cheek: basicResult.pores_right_cheek,
+      pores_jaw: basicResult.pores_jaw,
+      // 黑頭
       blackhead: basicResult.blackhead,
-      // 痘痘 (基礎版只有 0/1，無位置信息)
-      acne: {
-        value: basicResult.acne?.value,
-        confidence: basicResult.acne?.confidence,
-        count: basicResult.acne?.value || 0,
-        score: this.convertToScore(1 - (basicResult.acne?.value || 0))
-      },
-      // 痣 (基礎版只有 0/1)
-      mole: {
-        value: basicResult.mole?.value,
-        confidence: basicResult.mole?.confidence,
-        count: basicResult.mole?.value || 0
-      },
-      // 斑點 (基礎版只有 0/1)
-      spots: {
-        value: basicResult.skin_spot?.value,
-        confidence: basicResult.skin_spot?.confidence,
-        count: basicResult.skin_spot?.value || 0,
-        score: this.convertToScore(1 - (basicResult.skin_spot?.value || 0))
-      },
-      // 基礎版沒有這些數據
+      // 痘痘
+      acne: basicResult.acne,
+      // 閉口粉刺 (基礎版無此欄位)
       closed_comedones: null,
-      sensitivity: null,
+      // 痣
+      mole: basicResult.mole,
+      // 斑點
+      skin_spot: basicResult.skin_spot,
+      // 膚色標準 (基礎版無此欄位)
       skintone_ita: null,
       skin_hue_ha: null,
+      // 敏感度 (基礎版無此欄位)
+      sensitivity: null,
+      // 臉部色度圖 (基礎版無此欄位)
       face_maps: null
     };
   }
@@ -528,171 +488,60 @@ class SuluSkinAnalyzer {
    * @returns {Object} 統一格式
    */
   convertAdvancedToUnifiedFormat(ailabResult) {
+    // 直接返回 AILabTools API 原始格式，不添加自定義欄位
     return {
-      // 膚色 (轉換為評分制)
-      skin_color: {
-        value: ailabResult.skin_color?.value,
-        confidence: ailabResult.skin_color?.confidence,
-        score: this.convertToScore(ailabResult.skin_color?.confidence)
-      },
+      // 膚色
+      skin_color: ailabResult.skin_color,
       // 膚齡
-      skin_age: {
-        value: ailabResult.skin_age?.value,
-        score: this.calculateAgeScore(ailabResult.skin_age?.value)
-      },
+      skin_age: ailabResult.skin_age,
       // 膚質
-      skin_texture: ailabResult.skin_type ? {
-        type: ailabResult.skin_type.skin_type,
-        details: ailabResult.skin_type.details,
-        score: this.calculateSkinTypeScore(ailabResult.skin_type)
-      } : null,
+      skin_type: ailabResult.skin_type,
       // 雙眼皮
-      double_eyelid: {
-        left: ailabResult.left_eyelids,
-        right: ailabResult.right_eyelids
-      },
+      left_eyelids: ailabResult.left_eyelids,
+      right_eyelids: ailabResult.right_eyelids,
       // 眼袋
-      eye_bags: {
-        value: ailabResult.eye_pouch?.value,
-        severity: ailabResult.eye_pouch_severity,
-        confidence: ailabResult.eye_pouch?.confidence,
-        score: this.convertToScore(1 - (ailabResult.eye_pouch?.value || 0))
-      },
+      eye_pouch: ailabResult.eye_pouch,
+      eye_pouch_severity: ailabResult.eye_pouch_severity,
       // 黑眼圈
-      dark_circles: {
-        value: ailabResult.dark_circle?.value,
-        confidence: ailabResult.dark_circle?.confidence,
-        score: this.convertToScore(1 - (ailabResult.dark_circle?.value > 0 ? 0.5 : 0))
-      },
-      // 皺紋
-      wrinkles: {
-        forehead: {
-          value: ailabResult.forehead_wrinkle?.value,
-          confidence: ailabResult.forehead_wrinkle?.confidence,
-          score: this.convertToScore(1 - (ailabResult.forehead_wrinkle?.value || 0))
-        },
-        eye_corner: {
-          value: ailabResult.crows_feet?.value,
-          confidence: ailabResult.crows_feet?.confidence,
-          score: this.convertToScore(1 - (ailabResult.crows_feet?.value || 0))
-        },
-        eye_finelines: {
-          value: ailabResult.eye_finelines?.value,
-          confidence: ailabResult.eye_finelines?.confidence,
-          score: this.convertToScore(1 - (ailabResult.eye_finelines?.value || 0))
-        },
-        glabella: {
-          value: ailabResult.glabella_wrinkle?.value,
-          confidence: ailabResult.glabella_wrinkle?.confidence,
-          score: this.convertToScore(1 - (ailabResult.glabella_wrinkle?.value || 0))
-        },
-        nasolabial: {
-          value: ailabResult.nasolabial_fold?.value,
-          severity: ailabResult.nasolabial_fold_severity,
-          confidence: ailabResult.nasolabial_fold?.confidence,
-          score: this.convertToScore(1 - (ailabResult.nasolabial_fold?.value || 0))
-        }
-      },
+      dark_circle: ailabResult.dark_circle,
+      // 額頭皺紋
+      forehead_wrinkle: ailabResult.forehead_wrinkle,
+      // 魚尾紋
+      crows_feet: ailabResult.crows_feet,
+      // 眼部細紋
+      eye_finelines: ailabResult.eye_finelines,
+      // 眉間紋
+      glabella_wrinkle: ailabResult.glabella_wrinkle,
+      // 法令紋
+      nasolabial_fold: ailabResult.nasolabial_fold,
+      nasolabial_fold_severity: ailabResult.nasolabial_fold_severity,
       // 毛孔
-      pores: {
-        forehead: ailabResult.pores_forehead,
-        left_cheek: ailabResult.pores_left_cheek,
-        right_cheek: ailabResult.pores_right_cheek,
-        jaw: ailabResult.pores_jaw
-      },
+      pores_forehead: ailabResult.pores_forehead,
+      pores_left_cheek: ailabResult.pores_left_cheek,
+      pores_right_cheek: ailabResult.pores_right_cheek,
+      pores_jaw: ailabResult.pores_jaw,
       // 黑頭
       blackhead: ailabResult.blackhead,
       // 痘痘
-      acne: {
-        rectangle: ailabResult.acne?.rectangle || [],
-        confidence: ailabResult.acne?.confidence || [],
-        count: (ailabResult.acne?.rectangle || []).length,
-        score: this.calculateBlemishScore(ailabResult.acne?.rectangle || [])
-      },
-      // 閉口
-      closed_comedones: {
-        rectangle: ailabResult.closed_comedones?.rectangle || [],
-        confidence: ailabResult.closed_comedones?.confidence || [],
-        count: (ailabResult.closed_comedones?.rectangle || []).length
-      },
+      acne: ailabResult.acne,
+      // 閉口粉刺
+      closed_comedones: ailabResult.closed_comedones,
       // 痣
-      mole: {
-        rectangle: ailabResult.mole?.rectangle || [],
-        confidence: ailabResult.mole?.confidence || [],
-        count: (ailabResult.mole?.rectangle || []).length
-      },
+      mole: ailabResult.mole,
       // 斑點
-      spots: {
-        rectangle: ailabResult.skin_spot?.rectangle || [],
-        confidence: ailabResult.skin_spot?.confidence || [],
-        count: (ailabResult.skin_spot?.rectangle || []).length,
-        score: this.calculateBlemishScore(ailabResult.skin_spot?.rectangle || [])
-      },
-      // 敏感度 (如果有返回)
-      sensitivity: ailabResult.sensitivity,
-      // 膚色標準
+      skin_spot: ailabResult.skin_spot,
+      // 膚色標準 (ITA)
       skintone_ita: ailabResult.skintone_ita,
+      // 膚色色調 (HA)
       skin_hue_ha: ailabResult.skin_hue_ha,
+      // 敏感度
+      sensitivity: ailabResult.sensitivity,
       // 臉部色度圖
       face_maps: ailabResult.face_maps
     };
   }
 
   /**
-   * 將信心度轉換為評分 (0-100)
-   * @param {number} confidence - 信心度 (0-1)
-   * @returns {number} 評分 (0-100)
-   */
-  convertToScore(confidence) {
-    if (confidence === undefined || confidence === null) return null;
-    return Math.round(confidence * 100);
-  }
-
-  /**
-   * 根據膚齡計算評分
-   * @param {number} age - 膚齡
-   * @returns {number} 評分 (0-100)
-   */
-  calculateAgeScore(age) {
-    if (!age) return null;
-    // 假設理想膚齡為實際年齡的 80%，年輕 20% 為滿分
-    // 這裡簡化處理，年齡越小分數越高
-    const score = Math.max(0, 100 - age);
-    return Math.min(100, score);
-  }
-
-  /**
-   * 計算膚質評分
-   * @param {Object} skinType - 膚質資料
-   * @returns {number} 評分
-   */
-  calculateSkinTypeScore(skinType) {
-    if (!skinType || !skinType.details) return 70;
-    // 中性肌膚評分最高，其他根據信心度評分
-    const typeScores = {
-      0: 70, // 油性
-      1: 75, // 乾性
-      2: 95, // 中性
-      3: 80  // 混合性
-    };
-    return typeScores[skinType.skin_type] || 70;
-  }
-
-  /**
-   * 根據瑕疵數量計算評分
-   * @param {Array} rectangles - 瑕疵矩形陣列
-   * @returns {number} 評分
-   */
-  calculateBlemishScore(rectangles) {
-    const count = rectangles.length;
-    if (count === 0) return 100;
-    if (count <= 3) return 90;
-    if (count <= 8) return 75;
-    if (count <= 15) return 60;
-    if (count <= 25) return 45;
-    return 30;
-  }
-
   /**
    * 錯誤處理
    * @param {Error} error - 錯誤物件
@@ -895,6 +744,7 @@ class SuluSkinAnalyzer {
     return {
       success: true,
       overall_score: this.calculateOverallScore(result),
+      skin_age: result.skin_age?.value || null,
       key_concerns: this.identifyKeyConcerns(result),
       warnings: this.interpretWarnings(warnings),
       recommendations: this.generateRecommendations(result),
@@ -910,29 +760,67 @@ class SuluSkinAnalyzer {
   calculateOverallScore(result) {
     const scores = [];
     
-    // 收集所有分數
-    if (result.skin_color?.score) scores.push(result.skin_color.score);
-    if (result.skin_texture?.score) scores.push(result.skin_texture.score);
-    if (result.skin_age?.score) scores.push(result.skin_age.score);
-    if (result.eye_bags?.score !== null && result.eye_bags?.score !== undefined) {
-      scores.push(result.eye_bags.score);
+    // 根據 AILabTools API 原始數據計算分數
+    // 膚色 - confidence 越高越好
+    if (result.skin_color?.confidence) {
+      scores.push(result.skin_color.confidence * 100);
     }
-    if (result.dark_circles?.score !== null && result.dark_circles?.score !== undefined) {
-      scores.push(result.dark_circles.score);
+    
+    // 膚齡 - 年齡越小分數越高
+    if (result.skin_age?.value) {
+      scores.push(Math.max(0, 100 - result.skin_age.value));
     }
-    if (result.acne?.score) scores.push(result.acne.score);
-    if (result.spots?.score) scores.push(result.spots.score);
-
-    if (result.wrinkles) {
-      if (result.wrinkles.forehead?.score !== null && result.wrinkles.forehead?.score !== undefined) {
-        scores.push(result.wrinkles.forehead.score);
-      }
-      if (result.wrinkles.eye_corner?.score !== null && result.wrinkles.eye_corner?.score !== undefined) {
-        scores.push(result.wrinkles.eye_corner.score);
-      }
-      if (result.wrinkles.nasolabial?.score !== null && result.wrinkles.nasolabial?.score !== undefined) {
-        scores.push(result.wrinkles.nasolabial.score);
-      }
+    
+    // 眼袋 - value=0 最好
+    if (result.eye_pouch?.value !== undefined) {
+      scores.push((1 - result.eye_pouch.value) * 100);
+    }
+    
+    // 黑眼圈 - value=0 最好
+    if (result.dark_circle?.value !== undefined) {
+      const darkCircleScore = result.dark_circle.value === 0 ? 100 : 70;
+      scores.push(darkCircleScore);
+    }
+    
+    // 皺紋 - value=0 最好
+    if (result.forehead_wrinkle?.value !== undefined) {
+      scores.push((1 - result.forehead_wrinkle.value) * 100);
+    }
+    if (result.crows_feet?.value !== undefined) {
+      scores.push((1 - result.crows_feet.value) * 100);
+    }
+    if (result.nasolabial_fold?.value !== undefined) {
+      scores.push((1 - result.nasolabial_fold.value) * 100);
+    }
+    
+    // 毛孔 - value=0 最好
+    if (result.pores_forehead?.value !== undefined) {
+      scores.push((1 - result.pores_forehead.value) * 100);
+    }
+    if (result.pores_left_cheek?.value !== undefined) {
+      scores.push((1 - result.pores_left_cheek.value) * 100);
+    }
+    if (result.pores_right_cheek?.value !== undefined) {
+      scores.push((1 - result.pores_right_cheek.value) * 100);
+    }
+    
+    // 黑頭 - value=0 最好
+    if (result.blackhead?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.blackhead.value * 25)));
+    }
+    
+    // 痘痘 - rectangle 越少越好
+    if (result.acne?.rectangle) {
+      const acneCount = result.acne.rectangle.length;
+      const acneScore = acneCount === 0 ? 100 : Math.max(30, 100 - (acneCount * 5));
+      scores.push(acneScore);
+    }
+    
+    // 斑點 - rectangle 越少越好
+    if (result.skin_spot?.rectangle) {
+      const spotCount = result.skin_spot.rectangle.length;
+      const spotScore = spotCount === 0 ? 100 : Math.max(30, 100 - (spotCount * 3));
+      scores.push(spotScore);
     }
 
     return scores.length > 0
@@ -947,56 +835,52 @@ class SuluSkinAnalyzer {
    */
   identifyKeyConcerns(result) {
     const concerns = [];
-    const threshold = {
-      high: 70,
-      medium: 60
-    };
 
     // 痘痘
-    if (result.acne?.count > 0) {
-      const level = result.acne.count > 10 ? '嚴重' : result.acne.count > 5 ? '中度' : '輕度';
-      concerns.push(`${level}痘痘問題 (${result.acne.count} 處)`);
+    if (result.acne?.rectangle && result.acne.rectangle.length > 0) {
+      const count = result.acne.rectangle.length;
+      const level = count > 10 ? '嚴重' : count > 5 ? '中度' : '輕度';
+      concerns.push(`${level}痘痘問題 (${count} 處)`);
     }
     
     // 斑點
-    if (result.spots?.count > 0) {
-      const level = result.spots.count > 15 ? '明顯' : '輕微';
-      concerns.push(`${level}斑點色素沉澱 (${result.spots.count} 處)`);
+    if (result.skin_spot?.rectangle && result.skin_spot.rectangle.length > 0) {
+      const count = result.skin_spot.rectangle.length;
+      const level = count > 15 ? '明顯' : '輕微';
+      concerns.push(`${level}斑點色素沉澱 (${count} 處)`);
     }
     
     // 黑眼圈
-    if (result.dark_circles?.value > 0) {
+    if (result.dark_circle?.value > 0) {
       const types = ['無', '色素型', '血管型', '陰影型'];
-      const type = types[result.dark_circles.value] || '未知';
+      const type = types[result.dark_circle.value] || '未知';
       concerns.push(`黑眼圈 (${type})`);
     }
     
     // 眼袋
-    if (result.eye_bags?.value === 1) {
-      const severity = result.eye_bags.severity?.value;
+    if (result.eye_pouch?.value === 1) {
+      const severity = result.eye_pouch_severity?.value;
       const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
       concerns.push(`${severityText}眼袋問題`);
     }
 
     // 皺紋
-    if (result.wrinkles) {
-      if (result.wrinkles.forehead?.value === 1) {
-        concerns.push('額頭皺紋');
-      }
-      if (result.wrinkles.eye_corner?.value === 1) {
-        concerns.push('魚尾紋');
-      }
-      if (result.wrinkles.nasolabial?.value === 1) {
-        const severity = result.wrinkles.nasolabial.severity?.value;
-        const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
-        concerns.push(`${severityText}法令紋`);
-      }
-      if (result.wrinkles.eye_finelines?.value === 1) {
-        concerns.push('眼部細紋');
-      }
-      if (result.wrinkles.glabella?.value === 1) {
-        concerns.push('眉間紋');
-      }
+    if (result.forehead_wrinkle?.value === 1) {
+      concerns.push('額頭皺紋');
+    }
+    if (result.crows_feet?.value === 1) {
+      concerns.push('魚尾紋');
+    }
+    if (result.nasolabial_fold?.value === 1) {
+      const severity = result.nasolabial_fold_severity?.value;
+      const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
+      concerns.push(`${severityText}法令紋`);
+    }
+    if (result.eye_finelines?.value === 1) {
+      concerns.push('眼部細紋');
+    }
+    if (result.glabella_wrinkle?.value === 1) {
+      concerns.push('眉間紋');
     }
 
     // 黑頭
@@ -1006,8 +890,8 @@ class SuluSkinAnalyzer {
     }
 
     // 閉口粉刺
-    if (result.closed_comedones?.count > 0) {
-      concerns.push(`閉口粉刺 (${result.closed_comedones.count} 處)`);
+    if (result.closed_comedones?.rectangle && result.closed_comedones.rectangle.length > 0) {
+      concerns.push(`閉口粉刺 (${result.closed_comedones.rectangle.length} 處)`);
     }
 
     // 膚齡
@@ -1040,7 +924,7 @@ class SuluSkinAnalyzer {
     const recommendations = [];
 
     // 痘痘問題
-    if (result.acne?.count > 5) {
+    if (result.acne?.rectangle && result.acne.rectangle.length > 5) {
       recommendations.push({
         issue: '痘痘問題',
         suggestion: '建議使用含水楊酸(BHA)或茶樹精油的控油產品',
@@ -1050,7 +934,7 @@ class SuluSkinAnalyzer {
     }
 
     // 斑點問題
-    if (result.spots?.count > 3) {
+    if (result.skin_spot?.rectangle && result.skin_spot.rectangle.length > 3) {
       recommendations.push({
         issue: '斑點色素沉澱',
         suggestion: '建議使用美白精華,搭配嚴格防曬',
@@ -1060,7 +944,7 @@ class SuluSkinAnalyzer {
     }
 
     // 黑眼圈
-    if (result.dark_circles?.score < 60) {
+    if (result.dark_circle?.value > 0) {
       recommendations.push({
         issue: '黑眼圈',
         suggestion: '建議使用含咖啡因的眼霜,並改善睡眠品質',
@@ -1070,7 +954,7 @@ class SuluSkinAnalyzer {
     }
 
     // 眼袋
-    if (result.eye_bags?.score < 60) {
+    if (result.eye_pouch?.value === 1) {
       recommendations.push({
         issue: '眼袋',
         suggestion: '建議使用緊緻眼霜,搭配眼周按摩',
@@ -1080,12 +964,14 @@ class SuluSkinAnalyzer {
     }
 
     // 皺紋問題
-    const wrinkleCount = 
-      (result.wrinkles?.forehead?.count || 0) +
-      (result.wrinkles?.eye_corner?.count || 0) +
-      (result.wrinkles?.nasolabial?.count || 0);
+    let hasWrinkles = false;
+    if (result.forehead_wrinkle?.value === 1 || 
+        result.crows_feet?.value === 1 || 
+        result.nasolabial_fold?.value === 1) {
+      hasWrinkles = true;
+    }
 
-    if (wrinkleCount > 3) {
+    if (hasWrinkles) {
       recommendations.push({
         issue: '皺紋細紋',
         suggestion: '建議使用抗老精華,加強保濕',
@@ -1115,23 +1001,43 @@ class SuluSkinAnalyzer {
   extractDetailedScores(result) {
     return {
       skin_quality: {
-        color: result.skin_color?.score || null,
-        texture: result.skin_texture?.score || null
+        color: result.skin_color,
+        age: result.skin_age,
+        type: result.skin_type
       },
       eyes: {
-        eye_bags: result.eye_bags?.score || null,
-        dark_circles: result.dark_circles?.score || null,
-        double_eyelid: result.double_eyelid || null
+        eye_pouch: result.eye_pouch,
+        eye_pouch_severity: result.eye_pouch_severity,
+        dark_circle: result.dark_circle,
+        left_eyelids: result.left_eyelids,
+        right_eyelids: result.right_eyelids
       },
       wrinkles: {
-        forehead: result.wrinkles?.forehead || null,
-        eye_corner: result.wrinkles?.eye_corner || null,
-        nasolabial: result.wrinkles?.nasolabial || null
+        forehead_wrinkle: result.forehead_wrinkle,
+        crows_feet: result.crows_feet,
+        eye_finelines: result.eye_finelines,
+        glabella_wrinkle: result.glabella_wrinkle,
+        nasolabial_fold: result.nasolabial_fold,
+        nasolabial_fold_severity: result.nasolabial_fold_severity
+      },
+      pores: {
+        forehead: result.pores_forehead,
+        left_cheek: result.pores_left_cheek,
+        right_cheek: result.pores_right_cheek,
+        jaw: result.pores_jaw
       },
       blemishes: {
-        acne: result.acne || null,
-        spots: result.spots || null
-      }
+        blackhead: result.blackhead,
+        acne: result.acne,
+        mole: result.mole,
+        skin_spot: result.skin_spot,
+        closed_comedones: result.closed_comedones
+      },
+      color_analysis: {
+        skintone_ita: result.skintone_ita,
+        skin_hue_ha: result.skin_hue_ha
+      },
+      sensitivity: result.sensitivity
     };
   }
 
