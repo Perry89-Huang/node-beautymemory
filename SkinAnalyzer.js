@@ -864,28 +864,28 @@ class SkinAnalyzer {
     }
     
     // 眼袋
-    if (result.eye_pouch?.value === 1) {
+    if (result.eye_pouch?.value >= 1) {
       const severity = result.eye_pouch_severity?.value;
       const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
       concerns.push(`${severityText}眼袋問題`);
     }
 
     // 皺紋
-    if (result.forehead_wrinkle?.value === 1) {
+    if (result.forehead_wrinkle?.value >= 1) {
       concerns.push('額頭皺紋');
     }
-    if (result.crows_feet?.value === 1) {
+    if (result.crows_feet?.value >= 1) {
       concerns.push('魚尾紋');
     }
-    if (result.nasolabial_fold?.value === 1) {
+    if (result.nasolabial_fold?.value >= 1) {
       const severity = result.nasolabial_fold_severity?.value;
       const severityText = severity === 0 ? '輕度' : severity === 1 ? '中度' : severity === 2 ? '嚴重' : '';
       concerns.push(`${severityText}法令紋`);
     }
-    if (result.eye_finelines?.value === 1) {
+    if (result.eye_finelines?.value >= 1) {
       concerns.push('眼部細紋');
     }
-    if (result.glabella_wrinkle?.value === 1) {
+    if (result.glabella_wrinkle?.value >= 1) {
       concerns.push('眉間紋');
     }
 
@@ -960,7 +960,7 @@ class SkinAnalyzer {
     }
 
     // 眼袋
-    if (result.eye_pouch?.value === 1) {
+    if (result.eye_pouch?.value >= 1) {
       recommendations.push({
         issue: '眼袋',
         suggestion: '建議使用緊緻眼霜,搭配眼周按摩',
@@ -971,9 +971,9 @@ class SkinAnalyzer {
 
     // 皺紋問題
     let hasWrinkles = false;
-    if (result.forehead_wrinkle?.value === 1 || 
-        result.crows_feet?.value === 1 || 
-        result.nasolabial_fold?.value === 1) {
+    if (result.forehead_wrinkle?.value >= 1 || 
+        result.crows_feet?.value >= 1 || 
+        result.nasolabial_fold?.value >= 1) {
       hasWrinkles = true;
     }
 
