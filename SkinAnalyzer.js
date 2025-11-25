@@ -760,72 +760,78 @@ class SkinAnalyzer {
   calculateOverallScore(result) {
     const scores = [];
     
-    // 根據 AILabTools API 原始數據計算分數
-    // 膚色 - confidence 越高越好
-    if (result.skin_color?.confidence) {
-      scores.push(result.skin_color.confidence * 100);
-    }
+    // 通用計分函數：0=100分, 1=80分, 2=60分, 3=40分
+    const calculateItemScore = (value) => {
+      if (value === undefined || value === null) return null;
+      // 確保分數不低於 0
+      return Math.max(0, 100 - (value * 20));
+    };
+
+    // 1. 皺紋類 (權重較高)
+    const wrinkleFields = [
+      'forehead_wrinkle', 'crows_feet', 'nasolabial_fold', 
+      'eye_finelines', 'glabella_wrinkle'
+    ];
+    wrinkleFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(calculateItemScore(result[field].value));
+      }
+    });
     
-    // 膚齡 - 年齡越小分數越高
-    if (result.skin_age?.value) {
-      scores.push(Math.max(0, 100 - result.skin_age.value));
-    }
-    
-    // 眼袋 - value=0 最好
+    // 2. 眼部問題
     if (result.eye_pouch?.value !== undefined) {
-      scores.push((1 - result.eye_pouch.value) * 100);
+      scores.push(calculateItemScore(result.eye_pouch.value));
     }
-    
-    // 黑眼圈 - value=0 最好
     if (result.dark_circle?.value !== undefined) {
-      const darkCircleScore = result.dark_circle.value === 0 ? 100 : 70;
-      scores.push(darkCircleScore);
+      // 黑眼圈通常 0=無, 1=色素, 2=血管, 3=陰影，都算有問題
+      // 若 value=0 給 100，其他給 75
+      const score = result.dark_circle.value === 0 ? 100 : 75;
+      scores.push(score);
     }
     
-    // 皺紋 - value=0 最好
-    if (result.forehead_wrinkle?.value !== undefined) {
-      scores.push((1 - result.forehead_wrinkle.value) * 100);
-    }
-    if (result.crows_feet?.value !== undefined) {
-      scores.push((1 - result.crows_feet.value) * 100);
-    }
-    if (result.nasolabial_fold?.value !== undefined) {
-      scores.push((1 - result.nasolabial_fold.value) * 100);
-    }
+    // 3. 毛孔類
+    const poreFields = [
+      'pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'
+    ];
+    poreFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(calculateItemScore(result[field].value));
+      }
+    });
     
-    // 毛孔 - value=0 最好
-    if (result.pores_forehead?.value !== undefined) {
-      scores.push((1 - result.pores_forehead.value) * 100);
-    }
-    if (result.pores_left_cheek?.value !== undefined) {
-      scores.push((1 - result.pores_left_cheek.value) * 100);
-    }
-    if (result.pores_right_cheek?.value !== undefined) {
-      scores.push((1 - result.pores_right_cheek.value) * 100);
-    }
-    
-    // 黑頭 - value=0 最好
+    // 4. 瑕疵類 (黑頭、痘痘、斑點)
     if (result.blackhead?.value !== undefined) {
-      scores.push(Math.max(0, 100 - (result.blackhead.value * 25)));
+      scores.push(calculateItemScore(result.blackhead.value));
     }
     
-    // 痘痘 - rectangle 越少越好
+    // 痘痘 - 根據數量扣分
     if (result.acne?.rectangle) {
-      const acneCount = result.acne.rectangle.length;
-      const acneScore = acneCount === 0 ? 100 : Math.max(30, 100 - (acneCount * 5));
-      scores.push(acneScore);
+      const count = result.acne.rectangle.length;
+      // 0顆=100, 每增加1顆扣5分, 最低40分
+      const score = Math.max(40, 100 - (count * 5));
+      scores.push(score);
     }
     
-    // 斑點 - rectangle 越少越好
+    // 斑點 - 根據數量扣分
     if (result.skin_spot?.rectangle) {
-      const spotCount = result.skin_spot.rectangle.length;
-      const spotScore = spotCount === 0 ? 100 : Math.max(30, 100 - (spotCount * 3));
-      scores.push(spotScore);
+      const count = result.skin_spot.rectangle.length;
+      // 0顆=100, 每增加1顆扣3分, 最低40分
+      const score = Math.max(40, 100 - (count * 3));
+      scores.push(score);
     }
+
+    // 閉口粉刺
+    if (result.closed_comedones?.rectangle) {
+      const count = result.closed_comedones.rectangle.length;
+      const score = Math.max(40, 100 - (count * 5));
+      scores.push(score);
+    }
+
+    // 移除 skin_color (膚色) 和 skin_age (膚齡) 的評分，因為它們不是膚質好壞的直接指標
 
     return scores.length > 0
       ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 0;
+      : 80; // 默認 80 分
   }
 
   /**
