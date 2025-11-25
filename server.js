@@ -8,7 +8,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const SuluSkinAnalyzer = require('./SuluSkinAnalyzer');
+const SkinAnalyzer = require('./SkinAnalyzer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,15 +62,14 @@ const upload = multer({
 
 let analyzer;
 try {
-  // 支援兩種環境變數名稱 (AILAB_API_KEY 優先，向後兼容 SULU_API_KEY)
-  const apiKey = process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
+  const apiKey = process.env.AILAB_API_KEY ;
   // 從環境變數讀取版本，默認為 advanced
   const apiVersion = process.env.SKIN_ANALYSIS_VERSION || 'advanced';
-  analyzer = new SuluSkinAnalyzer(apiKey, apiVersion);
+  analyzer = new SkinAnalyzer(apiKey, apiVersion);
   console.log('✅ AILabTools Skin Analyzer 初始化成功');
 } catch (error) {
   console.error('❌ Analyzer 初始化失敗:', error.message);
-  console.error('請確認 AILAB_API_KEY (或 SULU_API_KEY) 環境變數已設定');
+  console.error('請確認 AILAB_API_KEY 環境變數已設定');
 }
 
 // ==========================================
@@ -100,8 +99,8 @@ app.get('/api/diagnostics', async (req, res) => {
     },
     analyzer: {
       initialized: !!analyzer,
-      api_key_set: !!(process.env.AILAB_API_KEY || process.env.SULU_API_KEY),
-      api_key_length: (process.env.AILAB_API_KEY || process.env.SULU_API_KEY || '').length,
+      api_key_set: !!(process.env.AILAB_API_KEY ),
+      api_key_length: (process.env.AILAB_API_KEY || '').length,
       api_provider: 'AILabTools',
       api_version: analyzer ? analyzer.getVersion() : null
     },

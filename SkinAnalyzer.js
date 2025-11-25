@@ -1,4 +1,4 @@
-// SuluSkinAnalyzer.js (now using AILabTools)
+// SkinAnalyzer.js (now using AILabTools)
 // 美魔力 × AILabTools Skin Analyze API 整合
 // 版本: 2.0.0
 
@@ -9,9 +9,9 @@ const path = require('path');
 
 /**
  * AILabTools Skin Analyze API 的 Node.js 封裝類別
- * (原 Sulu API 已關閉，改用 AILabTools)
+
  */
-class SuluSkinAnalyzer {
+class SkinAnalyzer {
   /**
    * 初始化分析器
    * @param {string} apiKey - API 金鑰(可選,會從環境變數讀取)
@@ -19,10 +19,10 @@ class SuluSkinAnalyzer {
    */
   constructor(apiKey = null, version = 'advanced') {
     // 支援兩種環境變數名稱(向後兼容)
-    this.apiKey = apiKey || process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
+    this.apiKey = apiKey || process.env.AILAB_API_KEY ;
     
     if (!this.apiKey) {
-      throw new Error('API Key is required. Set AILAB_API_KEY (or SULU_API_KEY) environment variable or pass it to constructor.');
+      throw new Error('API Key is required. Set AILAB_API_KEY  environment variable or pass it to constructor.');
     }
     
     // 設置 API 版本
@@ -42,7 +42,7 @@ class SuluSkinAnalyzer {
     // 日誌配置(隱藏 API Key 的前綴)
     const maskedKey = this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'NOT_SET';
     console.log(`🔧 AILabTools Skin Analyzer 配置:`);
-    console.log(`   - Provider: AILabTools (原 Sulu)`);
+    console.log(`   - Provider: AILabTools `);
     console.log(`   - Version: ${this.version === 'basic' ? '基礎版' : '專業版'} (${this.version})`);
     console.log(`   - Base URL: ${this.baseURL}`);
     console.log(`   - Endpoint: ${this.endpoint}`);
@@ -1161,4 +1161,4 @@ class SuluSkinAnalyzer {
   }
 }
 
-module.exports = SuluSkinAnalyzer;
+module.exports =SkinAnalyzer;
