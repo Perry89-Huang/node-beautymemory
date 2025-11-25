@@ -933,7 +933,7 @@ class SkinAnalyzer {
     if (result.acne?.rectangle && result.acne.rectangle.length > 5) {
       recommendations.push({
         issue: '痘痘問題',
-        suggestion: '建議使用含水楊酸(BHA)或茶樹精油的控油產品',
+        suggestion: '建議使用含水楊酸(BHA)或茶樹精油的控油產品 (改善項目: 痘痘)',
         ingredients: ['水楊酸', '茶樹精油', '杜鵑花酸'],
         routine: '早晚清潔後使用,局部點塗於痘痘處'
       });
@@ -943,7 +943,7 @@ class SkinAnalyzer {
     if (result.skin_spot?.rectangle && result.skin_spot.rectangle.length > 3) {
       recommendations.push({
         issue: '斑點色素沉澱',
-        suggestion: '建議使用美白精華,搭配嚴格防曬',
+        suggestion: '建議使用美白精華,搭配嚴格防曬 (改善項目: 色斑)',
         ingredients: ['維生素C', '熊果素', '傳明酸', '菸鹼醯胺'],
         routine: '晚上使用美白精華,白天務必防曬(SPF50+)'
       });
@@ -953,7 +953,7 @@ class SkinAnalyzer {
     if (result.dark_circle?.value > 0) {
       recommendations.push({
         issue: '黑眼圈',
-        suggestion: '建議使用含咖啡因的眼霜,並改善睡眠品質',
+        suggestion: '建議使用含咖啡因的眼霜,並改善睡眠品質 (改善項目: 黑眼圈)',
         ingredients: ['咖啡因', '維生素K', '視黃醇'],
         routine: '早晚輕輕拍打於眼周,確保每日睡眠7-8小時'
       });
@@ -963,7 +963,7 @@ class SkinAnalyzer {
     if (result.eye_pouch?.value >= 1) {
       recommendations.push({
         issue: '眼袋',
-        suggestion: '建議使用緊緻眼霜,搭配眼周按摩',
+        suggestion: '建議使用緊緻眼霜,搭配眼周按摩 (改善項目: 眼袋)',
         ingredients: ['咖啡因', '勝肽', '玻尿酸'],
         routine: '使用眼霜時搭配輕柔按摩,促進淋巴循環'
       });
@@ -971,16 +971,19 @@ class SkinAnalyzer {
 
     // 皺紋問題
     let hasWrinkles = false;
-    if (result.forehead_wrinkle?.value >= 1 || 
-        result.crows_feet?.value >= 1 || 
-        result.nasolabial_fold?.value >= 1) {
+    let wrinkleTypes = [];
+    if (result.forehead_wrinkle?.value >= 1) wrinkleTypes.push('抬頭紋');
+    if (result.crows_feet?.value >= 1) wrinkleTypes.push('魚尾紋');
+    if (result.nasolabial_fold?.value >= 1) wrinkleTypes.push('法令紋');
+    
+    if (wrinkleTypes.length > 0) {
       hasWrinkles = true;
     }
 
     if (hasWrinkles) {
       recommendations.push({
         issue: '皺紋細紋',
-        suggestion: '建議使用抗老精華,加強保濕',
+        suggestion: `建議使用抗老精華,加強保濕 (改善項目: ${wrinkleTypes.join('、')})`,
         ingredients: ['視黃醇', '勝肽', '玻尿酸', '維生素E'],
         routine: '晚上使用抗老精華(從低濃度開始),搭配防曬'
       });
