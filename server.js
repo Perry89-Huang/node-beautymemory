@@ -8,7 +8,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const SuluSkinAnalyzer = require('./SuluSkinAnalyzer');
+const SuluSkinAnalyzer = require('./SkinAnalyzer');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
