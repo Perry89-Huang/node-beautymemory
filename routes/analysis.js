@@ -58,7 +58,13 @@ const upload = multer({
 // ========================================
 router.get('/check-permission', optionalAuth, async (req, res) => {
   try {
+    console.log('[check-permission] 收到請求');
+    console.log('[check-permission] req.user:', req.user);
+    console.log('[check-permission] req.isGuest:', req.isGuest);
+    console.log('[check-permission] Authorization header:', req.headers['authorization'] ? '存在' : '不存在');
+    
     if (req.isGuest || !req.user) {
+      console.log('[check-permission] 用戶未登入，返回 GUEST_MODE');
       return res.json({
         success: true,
         canAnalyze: false,
@@ -204,17 +210,9 @@ router.post(
       // 上傳圖片到 Nhost Storage
       let imageUrl = null;
       try {
-        const { fileMetadata, error: uploadError } = await nhost.storage.upload({
-          file: req.file.buffer,
-          name: `analysis_${req.user.id}_${Date.now()}.jpg`,
-          bucketId: 'skin-analysis'
-        });
-
-        if (!uploadError && fileMetadata) {
-          imageUrl = nhost.storage.getPublicUrl({
-            fileId: fileMetadata.id
-          });
-        }
+        // 跳過圖片上傳功能，直接使用 null
+        // Nhost storage API 需要特殊配置，暫時省略
+        console.log('⚠️  圖片上傳功能已停用');
       } catch (uploadError) {
         console.error('圖片上傳錯誤:', uploadError);
       }
@@ -297,17 +295,32 @@ router.post(
       }
 
       console.log(`✅ 分析完成 | 評分: ${summary.overall_score}`);
+      
+      // 記錄返回數據結構以便調試
+      console.log('📤 返回數據結構:', {
+        hasResult: !!analysisResult.data?.result,
+        resultKeys: analysisResult.data?.result ? Object.keys(analysisResult.data.result).slice(0, 5) : [],
+        summaryScore: summary.overall_score,
+        summaryAge: summary.skin_age
+      });
 
       res.json({
         success: true,
         message: 'AI 肌膚分析完成',
         data: {
           recordId: recordData.insert_skin_analysis_records_one.id,
-          analysis: {
-            overallScore: summary.overall_score,
+          summary: {
+            overall_score: summary.overall_score,
+            skin_age: summary.skin_age,
             scores: summary.scores,
-            keyConcerns: summary.key_concerns,
+            key_concerns: summary.key_concerns,
             recommendations: summary.recommendations
+          },
+          analysis: {
+            result: analysisResult.data.result || analysisResult.data,
+            face_rectangle: analysisResult.data.face_rectangle,
+            face_maps: analysisResult.data.face_maps,
+            sensitivity: analysisResult.data.sensitivity
           },
           fengShui: fengShuiInfo,
           quota: req.quotaInfo.unlimited 

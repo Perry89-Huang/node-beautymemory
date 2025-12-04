@@ -185,6 +185,11 @@ class SkinAnalyzer {
         filename: filename,
         contentType: 'image/jpeg'
       });
+      
+      // Request red area map for sensitivity visualization
+      if (this.version === 'advanced') {
+        formData.append('return_maps', 'red_area');
+      }
 
       const startTime = Date.now();
       console.log(`🔄 嘗試連接 API (${retryCount + 1}/${this.maxRetries})...`);
@@ -391,6 +396,11 @@ class SkinAnalyzer {
     }
 
     console.log('✅ API 回應正常，開始轉換格式...');
+    console.log('   - Has face_maps:', !!data.face_maps);
+    console.log('   - Has sensitivity:', !!data.sensitivity);
+    if (data.face_maps) {
+      console.log('   - face_maps keys:', Object.keys(data.face_maps));
+    }
     
     // 成功回應 - 轉換 AILabTools 格式為統一格式
     const result = this.convertAILabToUnifiedFormat(data.result || {});
@@ -400,6 +410,8 @@ class SkinAnalyzer {
       data: {
         result: result,
         face_rectangle: data.face_rectangle || {},
+        face_maps: data.face_maps || null,
+        sensitivity: data.sensitivity || null,
         warnings: data.warning || []
       },
       metadata: {
