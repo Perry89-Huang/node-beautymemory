@@ -5,7 +5,7 @@
 
 const axios = require('axios');
 
-const BASE_URL = 'https://line-thefreen-1f18f78e0b98.herokuapp.com';
+const BASE_URL = 'https://beautymemory-6a58c48154f4.herokuapp.com';
 const ORIGIN = 'https://beautymemory.life';
 
 async function testCORS() {
