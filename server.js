@@ -35,11 +35,46 @@ app.use(helmet({
   }
 }));
 
-// CORS
+// CORS - 增強版配置支援 preflight 請求
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://localhost:2000',
+      'https://beautymemory.life',
+      'https://www.beautymemory.life'
+    ];
+
+console.log('🌐 CORS 允許的來源:', allowedOrigins);
+
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-  credentials: true
+  origin: function (origin, callback) {
+    // 允許沒有 origin 的請求 (例如: Postman, curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️  CORS 拒絕來源: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // 24 小時
 }));
+
+// 處理 preflight OPTIONS 請求
+app.options('*', cors());
 
 // 壓縮
 app.use(compression());
