@@ -176,8 +176,7 @@ router.get('/check-permission', optionalAuth, async (req, res) => {
 // ========================================
 router.post(
   '/analyze',
-  authenticateToken,
-  checkAnalysisQuota,
+  optionalAuth,  // 改為可選認證，未登入用戶也能使用
   upload.single('image'),
   async (req, res) => {
     try {
@@ -191,7 +190,8 @@ router.post(
         });
       }
 
-      console.log(`[會員 ${req.user.email}] 開始肌膚分析...`);
+      const userEmail = req.user?.email || 'guest';
+      console.log(`[${userEmail}] 開始肌膚分析...`);
 
       // 執行 AI 分析
       const analysisResult = await analyzer.analyzeFromBuffer(
@@ -258,43 +258,57 @@ router.post(
           }
         }
       `;
-      const { data: recordData, error: dbError } = await graphqlRequest(saveQuery, {
-        userId: req.user.id,
-        imageUrl,
-        overallScore: summary.overall_score,
-        hydrationScore: summary.scores?.hydration,
-        radianceScore: summary.scores?.radiance,
-        firmnessScore: summary.scores?.firmness,
-        textureScore: summary.scores?.texture,
-        wrinklesScore: summary.scores?.wrinkles,
-        poresScore: summary.scores?.pores,
-        pigmentationScore: summary.scores?.pigmentation,
-        fullAnalysisData: analysisResult.data,
-        recommendations: summary.recommendations,
-        analysisHour: currentHour,
-        fengShuiElement: fengShuiInfo.element,
-        fengShuiBlessing: fengShuiInfo.blessing
-      });
+      
+      let recordId = null;
+      let analyzedAt = new Date().toISOString();
+      
+      // 只有登入用戶才儲存到資料庫
+      if (req.user && req.user.id) {
+        const { data: recordData, error: dbError } = await graphqlRequest(saveQuery, {
+          userId: req.user.id,
+          imageUrl,
+          overallScore: summary.overall_score,
+          hydrationScore: summary.scores?.hydration,
+          radianceScore: summary.scores?.radiance,
+          firmnessScore: summary.scores?.firmness,
+          textureScore: summary.scores?.texture,
+          wrinklesScore: summary.scores?.wrinkles,
+          poresScore: summary.scores?.pores,
+          pigmentationScore: summary.scores?.pigmentation,
+          fullAnalysisData: analysisResult.data,
+          recommendations: summary.recommendations,
+          analysisHour: currentHour,
+          fengShuiElement: fengShuiInfo.element,
+          fengShuiBlessing: fengShuiInfo.blessing
+        });
+        
+        if (recordData?.insert_skin_analysis_records_one) {
+          recordId = recordData.insert_skin_analysis_records_one.id;
+          analyzedAt = recordData.insert_skin_analysis_records_one.created_at;
+        }
 
-      // 扣除分析次數
-      if (req.quotaInfo && !req.quotaInfo.unlimited) {
-        const deductQuery = `
-          mutation DeductAnalysis($userId: uuid!) {
-            update_user_profiles(
-              where: { user_id: { _eq: $userId } }
-              _inc: { 
-                total_analyses: 1
-                remaining_analyses: -1
+        // 扣除分析次數
+        if (req.quotaInfo && !req.quotaInfo.unlimited) {
+          const deductQuery = `
+            mutation DeductAnalysis($userId: uuid!) {
+              update_user_profiles(
+                where: { user_id: { _eq: $userId } }
+                _inc: { 
+                  total_analyses: 1
+                  remaining_analyses: -1
+                }
+              ) {
+                affected_rows
               }
-            ) {
-              affected_rows
             }
-          }
-        `;
-        await graphqlRequest(deductQuery, { userId: req.user.id });
+          `;
+          await graphqlRequest(deductQuery, { userId: req.user.id });
+        }
+      } else {
+        console.log('ℹ️  訪客模式 - 不儲存記錄到資料庫');
       }
 
-      console.log(`✅ 分析完成 | 評分: ${summary.overall_score}`);
+      console.log(`✅ 分析完成 | 評分: ${summary.overall_score} | 用戶: ${userEmail}`);
       
       // 記錄返回數據結構以便調試
       console.log('📤 返回數據結構:', {
@@ -308,7 +322,7 @@ router.post(
         success: true,
         message: 'AI 肌膚分析完成',
         data: {
-          recordId: recordData.insert_skin_analysis_records_one.id,
+          recordId: recordId,
           summary: {
             overall_score: summary.overall_score,
             skin_age: summary.skin_age,
@@ -323,14 +337,17 @@ router.post(
             sensitivity: analysisResult.data.sensitivity
           },
           fengShui: fengShuiInfo,
-          quota: req.quotaInfo.unlimited 
-            ? { unlimited: true }
-            : { 
-                remaining: req.quotaInfo.remaining - 1,
-                used: 1
-              },
+          quota: req.user && req.quotaInfo
+            ? (req.quotaInfo.unlimited 
+                ? { unlimited: true }
+                : { 
+                    remaining: req.quotaInfo.remaining - 1,
+                    used: 1
+                  })
+            : { guest: true, message: '訪客模式，不計入配額' },
           imageUrl,
-          analyzedAt: recordData.insert_skin_analysis_records_one.created_at
+          analyzedAt: analyzedAt,
+          userMode: req.user ? 'member' : 'guest'
         }
       });
 
