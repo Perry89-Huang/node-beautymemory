@@ -407,7 +407,7 @@ router.post(
           $analysisHour: Int!
           $fengShuiElement: String!
           $fengShuiBlessing: String!
-          $createdAt: timestamptz
+          $createdAt: timestamp
         ) {
           insert_skin_analysis_records_one(object: {
             user_id: $userId
