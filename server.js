@@ -1,6 +1,9 @@
 // server.js
 // 美魔力 AI 肌膚檢測系統 - 主伺服器 (整合會員系統)
 
+// 設置全局時區為台灣時間（UTC+8）
+process.env.TZ = 'Asia/Taipei';
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -16,7 +19,8 @@ const { nhost, testConnection } = require('./config/nhost');
 
 // 路由
 const membersRouter = require('./routes/members');
-const analysisRouter = require('./routes/analysis');const { getTaiwanISO } = require('./utils/timezone');
+const analysisRouter = require('./routes/analysis');
+const { getTaiwanISO, formatTaiwanTime } = require('./utils/timezone');
 // AI 客服系統
 const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
@@ -658,6 +662,8 @@ async function startServer() {
       console.log('\n✅ 伺服器啟動成功!');
       console.log(`   監聽端口: ${PORT}`);
       console.log(`   環境: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`   時區: Asia/Taipei (台灣時間 UTC+8)`);
+      console.log(`   當前時間: ${formatTaiwanTime(new Date())}`);
       console.log(`   API 文檔: http://localhost:${PORT}/`);
       console.log('\n📋 可用功能:');
       console.log('   ✓ 會員註冊/登入系統');
