@@ -407,6 +407,7 @@ router.post(
           $analysisHour: Int!
           $fengShuiElement: String!
           $fengShuiBlessing: String!
+          $createdAt: timestamptz
         ) {
           insert_skin_analysis_records_one(object: {
             user_id: $userId
@@ -426,6 +427,7 @@ router.post(
             analysis_hour: $analysisHour
             feng_shui_element: $fengShuiElement
             feng_shui_blessing: $fengShuiBlessing
+            created_at: $createdAt
           }) {
             id
             created_at
@@ -455,7 +457,8 @@ router.post(
           skincareRoutine: skincareRoutine,
           analysisHour: currentHour,
           fengShuiElement: fengShuiInfo.element,
-          fengShuiBlessing: fengShuiInfo.blessing
+          fengShuiBlessing: fengShuiInfo.blessing,
+          createdAt: getTaiwanISO()
         });
         
         if (recordData?.insert_skin_analysis_records_one) {
