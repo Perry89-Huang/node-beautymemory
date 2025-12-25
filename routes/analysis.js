@@ -12,6 +12,79 @@ const {
   optionalAuth 
 } = require('../middleware/auth');
 const SuluSkinAnalyzer = require('../SkinAnalyzer');
+const { getTaiwanHour, getTaiwanISO } = require('../utils/timezone');
+
+// 生成個人化專屬保養方案
+function generateSkincareRoutine(analysisData, overallScore, fengShuiElement, fengShuiBlessing) {
+  const routine = {
+    morning: [],
+    evening: [],
+    weekly: [],
+    products: [],
+    lifestyle: []
+  };
+
+  const skinType = analysisData.skin_type?.skin_type;
+  const hasPores = analysisData.pores_left_cheek?.value >= 1 || analysisData.pores_right_cheek?.value >= 1;
+  const hasWrinkles = analysisData.nasolabial_fold?.value >= 1 || analysisData.forehead_wrinkle?.value >= 1;
+  const hasEyeIssues = analysisData.eye_pouch?.value >= 1 || analysisData.dark_circle?.value >= 1;
+  const hasPigmentation = analysisData.skin_spot?.value >= 1;
+  const hasAcne = analysisData.acne?.value >= 1;
+  const isSensitive = analysisData.sensitivity?.sensitivity_area > 0.1;
+
+  // 早晨保養程序
+  routine.morning.push({ step: 1, name: '溫和潔面', desc: '使用溫水配合溫和潔面產品，避免過度清潔破壞肌膚屏障' });
+  routine.morning.push({ step: 2, name: '荷顏靚膚液升級版', desc: '平衡肌膚水油，調理膚質，為後續保養做準備' });
+  
+  if (hasWrinkles || overallScore < 75) {
+    routine.morning.push({ step: 3, name: '荷顏精華液', desc: '深層滋養，提升肌膚彈性，改善細紋' });
+  }
+  
+  routine.morning.push({ step: 4, name: '荷顏防曬隔離霜 SPF50+', desc: '每日必備！抵禦紫外線傷害，預防色斑與老化' });
+
+  // 晚間保養程序
+  routine.evening.push({ step: 1, name: '深層卸妝清潔', desc: '徹底卸除彩妝與污垢，保持毛孔暢通' });
+  routine.evening.push({ step: 2, name: '荷顏靚膚液升級版', desc: '二次清潔並平衡肌膚 pH 值' });
+  routine.evening.push({ step: 3, name: '荷顏精華液', desc: '夜間黃金修護時間，深層滋養肌膚' });
+  
+  if (hasWrinkles || hasEyeIssues) {
+    routine.evening.push({ step: 4, name: '荷顏煥采肌活蛋白霜', desc: '重點加強皺紋與眼周部位，配合按摩手法促進吸收' });
+  } else {
+    routine.evening.push({ step: 4, name: '保濕面霜', desc: '鎖住水分，修護肌膚屏障' });
+  }
+
+  // 每週保養
+  if (hasPores || hasAcne) {
+    routine.weekly.push({ freq: '每週 2-3 次', name: '荷顏 SOD 面膜', desc: '深層清潔毛孔，淨化肌膚，改善痘痘粉刺問題' });
+  } else {
+    routine.weekly.push({ freq: '每週 2-3 次', name: '荷顏 SOD 面膜', desc: '補充營養，提升肌膚光澤與彈性' });
+  }
+
+  // 推薦產品組合
+  if (hasWrinkles && hasPigmentation) {
+    routine.products.push('🌟 抗老淡斑套組：煥采肌活蛋白霜 + 精華液 + 防曬隔離霜');
+  } else if (hasWrinkles) {
+    routine.products.push('🌟 抗老修護套組：煥采肌活蛋白霜 + 精華液 + 靚膚液');
+  } else if (hasPores || hasAcne) {
+    routine.products.push('🌟 淨膚調理套組：靚膚液升級版 + SOD 面膜 + 溫和清潔');
+  }
+
+  if (isSensitive) {
+    routine.products.push('💧 敏感肌專用：選擇溫和無刺激配方，避免含酒精或香料產品');
+  }
+
+  // 生活建議
+  routine.lifestyle.push('💤 充足睡眠：每天 7-8 小時，晚上 11 點前入睡最佳');
+  routine.lifestyle.push('💧 補充水分：每日至少 2000ml 白開水，促進新陳代謝');
+  routine.lifestyle.push('🥗 均衡飲食：多攝取維生素 C、E，少吃油炸與高糖食物');
+  routine.lifestyle.push('🏃 適度運動：每週 3 次有氧運動，促進血液循環');
+  
+  if (fengShuiElement && fengShuiBlessing) {
+    routine.lifestyle.push(`🔮 風水時辰：${fengShuiElement}元素加持，${fengShuiBlessing}`);
+  }
+
+  return routine;
+}
 
 // Helper function for GraphQL requests using axios (more reliable than SDK)
 async function graphqlRequest(query, variables = {}) {
@@ -193,6 +266,65 @@ router.post(
       const userEmail = req.user?.email || 'guest';
       console.log(`[${userEmail}] 開始肌膚分析...`);
 
+      // 如果是登入用戶，檢查並設置配額資訊
+      if (req.user && req.user.id) {
+        const quotaQuery = `
+          query GetUserQuota($userId: uuid!) {
+            user_profiles(where: { user_id: { _eq: $userId } }) {
+              remaining_analyses
+              subscription_type
+              is_active
+            }
+          }
+        `;
+        const { data: quotaData, error: quotaError } = await graphqlRequest(quotaQuery, { userId: req.user.id });
+        
+        if (!quotaError && quotaData?.user_profiles?.[0]) {
+          const profile = quotaData.user_profiles[0];
+          
+          // 檢查帳號是否啟用
+          if (!profile.is_active) {
+            return res.status(403).json({
+              success: false,
+              error: {
+                code: 'ACCOUNT_DISABLED',
+                message: '您的帳號已停用，請聯繫客服'
+              }
+            });
+          }
+          
+          // 企業版無限次數
+          if (profile.subscription_type === 'enterprise') {
+            req.quotaInfo = {
+              hasQuota: true,
+              remaining: -1,
+              unlimited: true
+            };
+          } else {
+            // 檢查剩餘次數
+            if (profile.remaining_analyses <= 0) {
+              return res.status(403).json({
+                success: false,
+                error: {
+                  code: 'QUOTA_EXCEEDED',
+                  message: '分析次數已用完',
+                  subscriptionType: profile.subscription_type,
+                  upgradeMessage: profile.subscription_type === 'free' 
+                    ? '升級至專業版可獲得更多分析次數'
+                    : '請聯繫客服升級方案'
+                }
+              });
+            }
+            
+            req.quotaInfo = {
+              hasQuota: true,
+              remaining: profile.remaining_analyses,
+              unlimited: false
+            };
+          }
+        }
+      }
+
       // 執行 AI 分析
       const analysisResult = await analyzer.analyzeFromBuffer(
         req.file.buffer,
@@ -200,12 +332,50 @@ router.post(
       );
 
       if (!analysisResult.success) {
-        return res.status(400).json(analysisResult);
+        // 提供更友善的錯誤訊息
+        const errorCode = analysisResult.error?.code || analysisResult.error_code_str;
+        let userMessage = '圖片分析失敗';
+        let suggestions = [];
+
+        if (errorCode === 'PROCESSING_FAILURE') {
+          userMessage = '圖片無法分析，請檢查以下條件：';
+          suggestions = [
+            '✓ 確保臉部清晰可見，無遮擋物（口罩、眼鏡、瀏海等）',
+            '✓ 光線充足均勻，避免過亮或過暗',
+            '✓ 正面拍攝，臉部佔畫面 60% 以上',
+            '✓ 使用 JPG/JPEG 格式，檔案大小 100KB-5MB',
+            '✓ 圖片解析度建議 800x800 以上'
+          ];
+        } else if (errorCode === 'INVALID_IMAGE_FORMAT') {
+          userMessage = '圖片格式不支援';
+          suggestions = ['請使用 JPG 或 JPEG 格式的圖片'];
+        } else if (errorCode === 'IMAGE_TOO_LARGE') {
+          userMessage = '圖片檔案過大';
+          suggestions = ['請將圖片壓縮至 5MB 以下'];
+        }
+
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: errorCode || 'ANALYSIS_FAILED',
+            message: userMessage,
+            suggestions: suggestions,
+            detail: analysisResult.error?.message || analysisResult.error_msg
+          }
+        });
       }
 
       const summary = analyzer.generateSummary(analysisResult);
-      const currentHour = new Date().getHours();
+      const currentHour = getTaiwanHour();
       const fengShuiInfo = getFengShuiInfo(currentHour);
+      
+      // 生成個人化專屬保養方案
+      const skincareRoutine = generateSkincareRoutine(
+        analysisResult.data, 
+        summary.overall_score,
+        fengShuiInfo.element,
+        fengShuiInfo.blessing
+      );
 
       // 上傳圖片到 Nhost Storage
       let imageUrl = null;
@@ -223,6 +393,7 @@ router.post(
           $userId: uuid!
           $imageUrl: String
           $overallScore: Int!
+          $skinAge: Int
           $hydrationScore: Int
           $radianceScore: Int
           $firmnessScore: Int
@@ -232,6 +403,7 @@ router.post(
           $pigmentationScore: Int
           $fullAnalysisData: jsonb!
           $recommendations: jsonb!
+          $skincareRoutine: jsonb!
           $analysisHour: Int!
           $fengShuiElement: String!
           $fengShuiBlessing: String!
@@ -240,6 +412,7 @@ router.post(
             user_id: $userId
             image_url: $imageUrl
             overall_score: $overallScore
+            skin_age: $skinAge
             hydration_score: $hydrationScore
             radiance_score: $radianceScore
             firmness_score: $firmnessScore
@@ -249,6 +422,7 @@ router.post(
             pigmentation_score: $pigmentationScore
             full_analysis_data: $fullAnalysisData
             recommendations: $recommendations
+            skincare_routine: $skincareRoutine
             analysis_hour: $analysisHour
             feng_shui_element: $fengShuiElement
             feng_shui_blessing: $fengShuiBlessing
@@ -260,7 +434,7 @@ router.post(
       `;
       
       let recordId = null;
-      let analyzedAt = new Date().toISOString();
+      let analyzedAt = getTaiwanISO();
       
       // 只有登入用戶才儲存到資料庫
       if (req.user && req.user.id) {
@@ -268,6 +442,7 @@ router.post(
           userId: req.user.id,
           imageUrl,
           overallScore: summary.overall_score,
+          skinAge: summary.skin_age,
           hydrationScore: summary.scores?.hydration,
           radianceScore: summary.scores?.radiance,
           firmnessScore: summary.scores?.firmness,
@@ -277,6 +452,7 @@ router.post(
           pigmentationScore: summary.scores?.pigmentation,
           fullAnalysisData: analysisResult.data,
           recommendations: summary.recommendations,
+          skincareRoutine: skincareRoutine,
           analysisHour: currentHour,
           fengShuiElement: fengShuiInfo.element,
           fengShuiBlessing: fengShuiInfo.blessing
@@ -336,6 +512,7 @@ router.post(
             face_maps: analysisResult.data.face_maps,
             sensitivity: analysisResult.data.sensitivity
           },
+          skincareRoutine: skincareRoutine,
           fengShui: fengShuiInfo,
           quota: req.user && req.quotaInfo
             ? (req.quotaInfo.unlimited 
@@ -366,7 +543,7 @@ router.post(
 );
 
 // ========================================
-// 查詢歷史分析記錄
+// 查詢歷史分析記錄（增強版）
 // ========================================
 router.get('/history', authenticateToken, async (req, res) => {
   try {
@@ -386,19 +563,29 @@ router.get('/history', authenticateToken, async (req, res) => {
         ) {
           id
           overall_score
+          skin_age
           hydration_score
           radiance_score
           firmness_score
           texture_score
+          wrinkles_score
+          pores_score
+          pigmentation_score
           image_url
           feng_shui_element
           feng_shui_blessing
           is_favorite
           created_at
+          full_analysis_data
+          recommendations
+          skincare_routine
         }
         skin_analysis_records_aggregate(where: { user_id: { _eq: $userId } }) {
           aggregate {
             count
+            avg {
+              overall_score
+            }
           }
         }
       }
@@ -422,12 +609,97 @@ router.get('/history', authenticateToken, async (req, res) => {
           limit: parseInt(limit),
           offset: parseInt(offset),
           hasMore: data.skin_analysis_records_aggregate.aggregate.count > parseInt(offset) + parseInt(limit)
+        },
+        statistics: {
+          totalRecords: data.skin_analysis_records_aggregate.aggregate.count,
+          averageScore: data.skin_analysis_records_aggregate.aggregate.avg?.overall_score?.toFixed(1)
         }
       }
     });
 
   } catch (error) {
     console.error('查詢歷史記錄錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: '查詢失敗'
+      }
+    });
+  }
+});
+
+// ========================================
+// 查詢單筆詳細記錄
+// ========================================
+router.get('/history/:recordId', authenticateToken, async (req, res) => {
+  try {
+    const { recordId } = req.params;
+
+    const detailQuery = `
+      query GetRecordDetail($recordId: uuid!, $userId: uuid!) {
+        skin_analysis_records_by_pk(id: $recordId) {
+          id
+          user_id
+          overall_score
+          hydration_score
+          radiance_score
+          firmness_score
+          texture_score
+          wrinkles_score
+          pores_score
+          pigmentation_score
+          image_url
+          feng_shui_element
+          feng_shui_blessing
+          is_favorite
+          created_at
+          full_analysis_data
+          recommendations
+          skincare_routine
+        }
+      }
+    `;
+    
+    const { data, error } = await graphqlRequest(detailQuery, {
+      recordId,
+      userId: req.user.id
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const record = data.skin_analysis_records_by_pk;
+    
+    if (!record) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'RECORD_NOT_FOUND',
+          message: '找不到該記錄'
+        }
+      });
+    }
+
+    // 確保只有記錄擁有者可以查看
+    if (record.user_id !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: '無權查看該記錄'
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: record
+    });
+
+  } catch (error) {
+    console.error('查詢記錄詳情錯誤:', error);
     res.status(500).json({
       success: false,
       error: {

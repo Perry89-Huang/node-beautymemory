@@ -16,8 +16,7 @@ const { nhost, testConnection } = require('./config/nhost');
 
 // 路由
 const membersRouter = require('./routes/members');
-const analysisRouter = require('./routes/analysis');
-
+const analysisRouter = require('./routes/analysis');const { getTaiwanISO } = require('./utils/timezone');
 // AI 客服系統
 const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
@@ -94,7 +93,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 請求日誌
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} | ${req.method} ${req.path}`);
+  console.log(`${getTaiwanISO()} | ${req.method} ${req.path}`);
   next();
 });
 
@@ -181,7 +180,7 @@ app.get('/health', async (req, res) => {
   
   res.json({
     status: 'healthy',
-    timestamp: new Date().toISOString(),
+    timestamp: getTaiwanISO(),
     services: {
       api: 'online',
       nhost: nhostConnected ? 'online' : 'offline',
@@ -194,7 +193,7 @@ app.get('/health', async (req, res) => {
 // 診斷資訊
 app.get('/api/diagnostics', async (req, res) => {
   const diagnostics = {
-    timestamp: new Date().toISOString(),
+    timestamp: getTaiwanISO(),
     environment: {
       nodeVersion: process.version,
       platform: process.platform,
@@ -309,7 +308,7 @@ app.post('/api/ai/skin-recommendation', aiRecommendationLimiter, async (req, res
       success: true,
       data: {
         recommendation: aiRecommendation,
-        timestamp: new Date().toISOString(),
+        timestamp: getTaiwanISO(),
         model: 'claude-sonnet-4-20250514'
       }
     });
@@ -382,7 +381,7 @@ app.post('/api/ai/chat', aiRecommendationLimiter, async (req, res) => {
       success: true,
       data: {
         response: aiResponse,
-        timestamp: new Date().toISOString(),
+        timestamp: getTaiwanISO(),
         relevantProducts: relevantInfo.products.length,
         relevantFAQ: relevantInfo.faq.length
       }

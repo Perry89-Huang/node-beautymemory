@@ -760,7 +760,262 @@ class SkinAnalyzer {
       key_concerns: this.identifyKeyConcerns(result),
       warnings: this.interpretWarnings(warnings),
       recommendations: this.generateRecommendations(result),
+      scores: this.calculateDetailedScores(result),
       detailed_scores: this.extractDetailedScores(result)
+    };
+  }
+
+  /**
+   * 計算詳細分數（水潤度、光澤度、緊緻度）
+   * @param {Object} result - 分析結果
+   * @returns {Object} 詳細分數對象
+   */
+  calculateDetailedScores(result) {
+    // 水潤度計算 (基於毛孔、膚質、黑頭等指標)
+    const hydration = this.calculateHydrationScore(result);
+    
+    // 光澤度計算 (基於斑點、膚色、整體膚質)
+    const radiance = this.calculateRadianceScore(result);
+    
+    // 緊緻度計算 (基於皺紋、眼袋、法令紋等)
+    const firmness = this.calculateFirmnessScore(result);
+    
+    // 其他現有分數
+    const texture = this.calculateTextureScore(result);
+    const wrinkles = this.calculateWrinklesScore(result);
+    const pores = this.calculatePoresScore(result);
+    const pigmentation = this.calculatePigmentationScore(result);
+    
+    return {
+      hydration,
+      radiance,
+      firmness,
+      texture,
+      wrinkles,
+      pores,
+      pigmentation
+    };
+  }
+
+  /**
+   * 計算水潤度分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 水潤度分數 (0-100)
+   */
+  calculateHydrationScore(result) {
+    const scores = [];
+    
+    // 毛孔越大，代表水分越少
+    const poreFields = ['pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'];
+    poreFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+      }
+    });
+    
+    // 黑頭問題影響水潤度
+    if (result.blackhead?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.blackhead.value * 15)));
+    }
+    
+    // 閉口粉刺影響水潤度
+    if (result.closed_comedones?.rectangle) {
+      const count = result.closed_comedones.rectangle.length;
+      scores.push(Math.max(60, 100 - (count * 3)));
+    }
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 80;
+  }
+
+  /**
+   * 計算光澤度分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 光澤度分數 (0-100)
+   */
+  calculateRadianceScore(result) {
+    const scores = [];
+    
+    // 斑點影響光澤度
+    if (result.skin_spot?.rectangle) {
+      const count = result.skin_spot.rectangle.length;
+      scores.push(Math.max(50, 100 - (count * 2)));
+    }
+    
+    // 痘痘影響光澤度
+    if (result.acne?.rectangle) {
+      const count = result.acne.rectangle.length;
+      scores.push(Math.max(60, 100 - (count * 3)));
+    }
+    
+    // 黑眼圈影響整體光澤感
+    if (result.dark_circle?.value !== undefined) {
+      scores.push(result.dark_circle.value === 0 ? 100 : 80);
+    }
+    
+    // 膚色均勻度（如果有 ITA 值）
+    if (result.skintone_ita?.value !== undefined) {
+      // ITA 值越穩定代表膚色越均勻，光澤度越好
+      scores.push(85); // 有檢測到就給基礎分
+    }
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 80;
+  }
+
+  /**
+   * 計算緊緻度分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 緊緻度分數 (0-100)
+   */
+  calculateFirmnessScore(result) {
+    const scores = [];
+    
+    // 皺紋是緊緻度的主要指標
+    const wrinkleFields = [
+      'forehead_wrinkle', 'crows_feet', 'nasolabial_fold',
+      'eye_finelines', 'glabella_wrinkle'
+    ];
+    wrinkleFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+      }
+    });
+    
+    // 眼袋影響緊緻度
+    if (result.eye_pouch?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.eye_pouch.value * 20)));
+    }
+    
+    // 法令紋嚴重度
+    if (result.nasolabial_fold_severity?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.nasolabial_fold_severity.value * 20)));
+    }
+    
+    // 眼袋嚴重度
+    if (result.eye_pouch_severity?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.eye_pouch_severity.value * 20)));
+    }
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 80;
+  }
+
+  /**
+   * 計算膚質分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 膚質分數 (0-100)
+   */
+  calculateTextureScore(result) {
+    const scores = [];
+    
+    const poreFields = ['pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'];
+    poreFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+      }
+    });
+    
+    if (result.blackhead?.value !== undefined) {
+      scores.push(Math.max(0, 100 - (result.blackhead.value * 20)));
+    }
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 80;
+  }
+
+  /**
+   * 計算皺紋分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 皺紋分數 (0-100)
+   */
+  calculateWrinklesScore(result) {
+    const scores = [];
+    const wrinkleFields = ['forehead_wrinkle', 'crows_feet', 'nasolabial_fold', 'eye_finelines', 'glabella_wrinkle'];
+    
+    wrinkleFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+      }
+    });
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 100;
+  }
+
+  /**
+   * 計算毛孔分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 毛孔分數 (0-100)
+   */
+  calculatePoresScore(result) {
+    const scores = [];
+    const poreFields = ['pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'];
+    
+    poreFields.forEach(field => {
+      if (result[field]?.value !== undefined) {
+        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+      }
+    });
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 100;
+  }
+
+  /**
+   * 計算色素沉澱分數
+   * @param {Object} result - 分析結果
+   * @returns {number} 色素沉澱分數 (0-100)
+   */
+  calculatePigmentationScore(result) {
+    const scores = [];
+    
+    if (result.skin_spot?.rectangle) {
+      const count = result.skin_spot.rectangle.length;
+      scores.push(Math.max(40, 100 - (count * 3)));
+    }
+    
+    if (result.acne?.rectangle) {
+      const count = result.acne.rectangle.length;
+      scores.push(Math.max(50, 100 - (count * 4)));
+    }
+    
+    return scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 90;
+  }
+
+  /**
+   * 提取詳細分數用於報告顯示
+   * @param {Object} result - 分析結果
+   * @returns {Object} 詳細分數結構
+   */
+  extractDetailedScores(result) {
+    return {
+      skin_quality: {
+        color: result.skin_color ? ['白皙', '黃調', '棕調', '黑調'][result.skin_color.value || result.skin_color.skin_color] : 'N/A',
+        texture: result.skin_type ? ['油性', '乾性', '中性', '混合性'][result.skin_type.skin_type] : 'N/A'
+      },
+      eyes: {
+        eye_bags: result.eye_pouch?.value >= 1 ? '檢測到' : '無',
+        dark_circles: result.dark_circle?.value > 0 ? ['無', '色素型', '血管型', '陰影型'][result.dark_circle.value] : '無'
+      },
+      blemishes: {
+        acne: result.acne?.rectangle ? {
+          count: result.acne.rectangle.length,
+          score: Math.max(40, 100 - (result.acne.rectangle.length * 5))
+        } : { count: 0, score: 100 },
+        spots: result.skin_spot?.rectangle ? {
+          count: result.skin_spot.rectangle.length,
+          score: Math.max(40, 100 - (result.skin_spot.rectangle.length * 3))
+        } : { count: 0, score: 100 }
+      }
     };
   }
 
