@@ -172,10 +172,17 @@ router.post('/auth/refresh', async (req, res) => {
       });
     }
 
-    // 使用 Nhost SDK 的 refreshSession 方法
-    const { body } = await nhost.auth.refreshSession(refreshToken);
-    
-    if (!body.session) {
+    // 直接調用 Nhost Auth API 刷新 token
+    const subdomain = process.env.NHOST_SUBDOMAIN;
+    const region = process.env.NHOST_REGION || 'ap-southeast-1';
+    const authUrl = `https://${subdomain}.auth.${region}.nhost.run/v1/token`;
+
+    const tokenResponse = await axios.post(authUrl, {
+      refreshToken: refreshToken
+    });
+
+    if (!tokenResponse.data || !tokenResponse.data.accessToken) {
+      console.error('RefreshToken 回應錯誤:', tokenResponse.data);
       return res.status(401).json({
         success: false,
         error: {
@@ -185,7 +192,8 @@ router.post('/auth/refresh', async (req, res) => {
       });
     }
 
-    const session = body.session;
+    const sessionData = tokenResponse.data;
+    const userId = sessionData.user.id;
 
     // 查詢用戶完整資料
     const query = `
@@ -204,7 +212,7 @@ router.post('/auth/refresh', async (req, res) => {
       }
     `;
     
-    const { data: userData } = await graphqlRequest(query, { userId: session.user.id });
+    const { data: userData } = await graphqlRequest(query, { userId: userId });
     
     if (!userData || !userData.user) {
       return res.status(404).json({
@@ -231,7 +239,7 @@ router.post('/auth/refresh', async (req, res) => {
           }
         }
       `;
-      await graphqlRequest(updateQuery, { userId: session.user.id });
+      await graphqlRequest(updateQuery, { userId: userId });
     } catch (e) {
       // 忽略更新失敗
     }
@@ -240,7 +248,7 @@ router.post('/auth/refresh', async (req, res) => {
       success: true,
       message: 'Token 刷新成功',
       data: {
-        accessToken: session.accessToken,
+        accessToken: sessionData.accessToken,
         user: {
           id: user.id,
           email: user.email,
@@ -254,12 +262,12 @@ router.post('/auth/refresh', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Token 刷新錯誤:', error);
+    console.error('Token 刷新錯誤:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
       error: {
         code: 'SERVER_ERROR',
-        message: 'Token 刷新失敗'
+        message: 'Token 刷新失敗: ' + (error.response?.data?.message || error.message)
       }
     });
   }
