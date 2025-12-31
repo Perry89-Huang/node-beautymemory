@@ -53,7 +53,7 @@ async function testConnection() {
     console.log('✅ Nhost 連線成功');
     console.log(`   Subdomain: ${NHOST_SUBDOMAIN}`);
     console.log(`   Region: ${NHOST_REGION}`);
-    console.log(`   GraphQL: https://${NHOST_SUBDOMAIN}.nhost.run/v1/graphql`);
+    console.log(`   GraphQL: ${nhost.graphql.url}`);
     return true;
   } catch (error) {
     console.error('❌ Nhost 連線測試錯誤:', error.message);

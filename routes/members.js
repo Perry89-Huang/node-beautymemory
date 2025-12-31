@@ -156,6 +156,112 @@ router.post('/register', async (req, res) => {
 });
 
 // ========================================
+// Google OAuth 登入 - 取得授權 URL
+// ========================================
+router.get('/auth/google', async (req, res) => {
+  try {
+    // 使用 Nhost 的 Google OAuth URL（新格式）
+    const subdomain = process.env.NHOST_SUBDOMAIN;
+    const region = process.env.NHOST_REGION || 'ap-southeast-1';
+    
+    if (!subdomain) {
+      return res.status(500).json({
+        success: false,
+        error: {
+          code: 'CONFIG_ERROR',
+          message: 'Nhost 配置未完成'
+        }
+      });
+    }
+
+    // Nhost Google OAuth URL 格式（更新為新格式）
+    const authUrl = `https://${subdomain}.auth.${region}.nhost.run/v1/signin/provider/google`;
+    
+    res.json({
+      success: true,
+      data: {
+        authUrl,
+        provider: 'google'
+      }
+    });
+
+  } catch (error) {
+    console.error('Google OAuth URL 錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: 'Google 登入初始化失敗'
+      }
+    });
+  }
+});
+
+// ========================================
+// Google OAuth 回調處理
+// ========================================
+router.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { refreshToken } = req.query;
+
+    if (!refreshToken) {
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3001'}?error=oauth_failed`);
+    }
+
+    // 使用 refreshToken 換取 session
+    const { body } = await nhost.auth.refreshSession(refreshToken);
+    
+    if (!body.session) {
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3001'}?error=session_failed`);
+    }
+
+    const session = body.session;
+
+    // 檢查是否為新用戶（需要建立 user_profile）
+    const checkProfileQuery = `
+      query CheckProfile($userId: uuid!) {
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          user_id
+        }
+      }
+    `;
+
+    const { data: profileData } = await graphqlRequest(checkProfileQuery, { userId: session.user.id });
+
+    // 如果是新用戶，確保 profile 已建立（通常由觸發器自動建立）
+    if (!profileData.user_profiles || profileData.user_profiles.length === 0) {
+      console.log('New Google user, profile will be created by trigger');
+      // 等待一下讓觸發器完成
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // 更新最後登入時間
+    const updateLoginQuery = `
+      mutation UpdateLastLogin($userId: uuid!) {
+        update_user_profiles(
+          where: { user_id: { _eq: $userId } }
+          _set: { last_login: "now()" }
+        ) {
+          affected_rows
+        }
+      }
+    `;
+    await graphqlRequest(updateLoginQuery, { userId: session.user.id });
+
+    // 重導向回前端，帶上 tokens
+    const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3001');
+    redirectUrl.searchParams.set('accessToken', session.accessToken);
+    redirectUrl.searchParams.set('refreshToken', session.refreshToken);
+    
+    res.redirect(redirectUrl.toString());
+
+  } catch (error) {
+    console.error('Google OAuth 回調錯誤:', error);
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3001'}?error=callback_failed`);
+  }
+});
+
+// ========================================
 // 會員登入
 // ========================================
 router.post('/login', async (req, res) => {
