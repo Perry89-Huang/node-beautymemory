@@ -156,6 +156,116 @@ router.post('/register', async (req, res) => {
 });
 
 // ========================================
+// OAuth Token 刷新 - 使用 refreshToken 換取 accessToken
+// ========================================
+router.post('/auth/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_REFRESH_TOKEN',
+          message: '缺少 refreshToken'
+        }
+      });
+    }
+
+    // 使用 Nhost SDK 的 refreshSession 方法
+    const { body } = await nhost.auth.refreshSession(refreshToken);
+    
+    if (!body.session) {
+      return res.status(401).json({
+        success: false,
+        error: {
+          code: 'INVALID_REFRESH_TOKEN',
+          message: 'RefreshToken 無效或已過期'
+        }
+      });
+    }
+
+    const session = body.session;
+
+    // 查詢用戶完整資料
+    const query = `
+      query GetUserInfo($userId: uuid!) {
+        user(id: $userId) {
+          id
+          email
+          displayName
+          avatarUrl
+        }
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          member_level
+          remaining_analyses
+          total_analyses
+        }
+      }
+    `;
+    
+    const { data: userData } = await graphqlRequest(query, { userId: session.user.id });
+    
+    if (!userData || !userData.user) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: '找不到用戶資料'
+        }
+      });
+    }
+
+    const user = userData.user;
+    const profile = userData.user_profiles?.[0];
+
+    // 更新最後登入時間
+    try {
+      const updateQuery = `
+        mutation UpdateLastLogin($userId: uuid!) {
+          update_user_profiles(
+            where: { user_id: { _eq: $userId } }
+            _set: { last_login: "now()" }
+          ) {
+            affected_rows
+          }
+        }
+      `;
+      await graphqlRequest(updateQuery, { userId: session.user.id });
+    } catch (e) {
+      // 忽略更新失敗
+    }
+
+    res.json({
+      success: true,
+      message: 'Token 刷新成功',
+      data: {
+        accessToken: session.accessToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          memberLevel: profile?.member_level || 'beginner',
+          remainingAnalyses: profile?.remaining_analyses || 0,
+          totalAnalyses: profile?.total_analyses || 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Token 刷新錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: 'Token 刷新失敗'
+      }
+    });
+  }
+});
+
+// ========================================
 // Google OAuth 登入 - 取得授權 URL
 // ========================================
 router.get('/auth/google', async (req, res) => {
@@ -163,6 +273,7 @@ router.get('/auth/google', async (req, res) => {
     // 使用 Nhost 的 Google OAuth URL（新格式）
     const subdomain = process.env.NHOST_SUBDOMAIN;
     const region = process.env.NHOST_REGION || 'ap-southeast-1';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:2000';
     
     if (!subdomain) {
       return res.status(500).json({
@@ -174,14 +285,17 @@ router.get('/auth/google', async (req, res) => {
       });
     }
 
-    // Nhost Google OAuth URL 格式（更新為新格式）
+    // Nhost Google OAuth URL 格式
+    // 不使用 redirectTo 參數，讓 Nhost 使用 Dashboard 中設定的默認重定向 URL
     const authUrl = `https://${subdomain}.auth.${region}.nhost.run/v1/signin/provider/google`;
     
     res.json({
       success: true,
       data: {
         authUrl,
-        provider: 'google'
+        provider: 'google',
+        redirectUrl: frontendUrl,
+        note: '請確保在 Nhost Dashboard > Settings > Sign-In Methods > Allowed Redirect URLs 中已添加前端 URL'
       }
     });
 
