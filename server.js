@@ -20,6 +20,7 @@ const { nhost, testConnection } = require('./config/nhost');
 // 路由
 const membersRouter = require('./routes/members');
 const analysisRouter = require('./routes/analysis');
+const paymentRouter = require('./routes/payment');
 const { getTaiwanISO, formatTaiwanTime } = require('./utils/timezone');
 // AI 客服系統
 const anthropic = new Anthropic({
@@ -242,6 +243,7 @@ app.get('/api/diagnostics', async (req, res) => {
 // 掛載路由
 app.use('/api/members', membersRouter);
 app.use('/api/analysis', analysisRouter);
+app.use('/api/payment', paymentRouter);
 
 // ========================================
 // AI 推薦系統 API
