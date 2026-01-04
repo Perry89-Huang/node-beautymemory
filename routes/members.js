@@ -281,7 +281,9 @@ router.get('/auth/google', async (req, res) => {
     // 使用 Nhost 的 Google OAuth URL（新格式）
     const subdomain = process.env.NHOST_SUBDOMAIN;
     const region = process.env.NHOST_REGION || 'ap-southeast-1';
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:2000';
+    
+    // 優先使用前端傳來的 redirectTo，這樣可以支援 localhost 測試
+    const redirectTo = req.query.redirectTo || process.env.FRONTEND_URL || 'http://localhost:3001';
     
     if (!subdomain) {
       return res.status(500).json({
@@ -294,16 +296,23 @@ router.get('/auth/google', async (req, res) => {
     }
 
     // Nhost Google OAuth URL 格式
-    // 不使用 redirectTo 參數，讓 Nhost 使用 Dashboard 中設定的默認重定向 URL
-    const authUrl = `https://${subdomain}.auth.${region}.nhost.run/v1/signin/provider/google`;
+    // 使用 redirectTo 參數，讓 OAuth 登入後導回到發起登入的 origin
+    const authUrl = `https://${subdomain}.auth.${region}.nhost.run/v1/signin/provider/google?redirectTo=${encodeURIComponent(redirectTo)}`;
+    
+    // 調試日誌
+    console.log('🔐 Google OAuth Request:', {
+      receivedRedirectTo: req.query.redirectTo,
+      finalRedirectTo: redirectTo,
+      authUrl: authUrl
+    });
     
     res.json({
       success: true,
       data: {
         authUrl,
         provider: 'google',
-        redirectUrl: frontendUrl,
-        note: '請確保在 Nhost Dashboard > Settings > Sign-In Methods > Allowed Redirect URLs 中已添加前端 URL'
+        redirectUrl: redirectTo,
+        note: `將在登入後重定向至: ${redirectTo}。請確保此 URL 已在 Nhost Dashboard 中的 Allowed Redirect URLs 設定`
       }
     });
 
@@ -844,6 +853,236 @@ router.get('/statistics', authenticateToken, async (req, res) => {
       error: {
         code: 'SERVER_ERROR',
         message: '取得統計資料失敗'
+      }
+    });
+  }
+});
+
+// ========================================
+// Google OAuth 登入
+// ========================================
+
+// Step 1: 取得 Google OAuth 授權 URL
+router.get('/auth/google', async (req, res) => {
+  try {
+    const redirectTo = req.query.redirectTo || 'http://localhost:3001';
+    
+    console.log('🔐 Google OAuth 請求:', {
+      redirectTo,
+      backendUrl: process.env.BACKEND_URL || 'http://localhost:3000'
+    });
+
+    // 建立 OAuth URL
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:3000';
+    const callbackUrl = `${backendUrl}/api/members/auth/google/callback`;
+    
+    // Nhost Google OAuth URL
+    const nhostSubdomain = process.env.NHOST_SUBDOMAIN;
+    const nhostRegion = process.env.NHOST_REGION || 'ap-southeast-1';
+    
+    // 使用 Nhost 的 OAuth endpoint，並指定 callback URL
+    const authUrl = `https://${nhostSubdomain}.nhost.run/v1/auth/signin/provider/google?redirectTo=${encodeURIComponent(callbackUrl + '?frontendRedirect=' + encodeURIComponent(redirectTo))}`;
+
+    console.log('✅ 產生 OAuth URL:', authUrl);
+
+    res.json({
+      success: true,
+      data: {
+        authUrl,
+        callbackUrl
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Google OAuth URL 產生失敗:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'OAUTH_URL_FAILED',
+        message: 'Google 登入初始化失敗'
+      }
+    });
+  }
+});
+
+// Step 2: 處理 Google OAuth 回調
+router.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { refreshToken, frontendRedirect } = req.query;
+    
+    console.log('🔐 OAuth Callback 收到:', {
+      hasRefreshToken: !!refreshToken,
+      frontendRedirect
+    });
+
+    if (!refreshToken) {
+      // 如果沒有 refreshToken，可能是錯誤或用戶取消
+      const errorRedirect = `${frontendRedirect || 'http://localhost:3001'}?error=oauth_cancelled`;
+      return res.redirect(errorRedirect);
+    }
+
+    // 使用 refreshToken 換取完整 session
+    const { body } = await nhost.auth.refreshSession(refreshToken);
+    const session = body.session;
+
+    if (!session) {
+      console.error('❌ 無法取得 session');
+      const errorRedirect = `${frontendRedirect || 'http://localhost:3001'}?error=session_failed`;
+      return res.redirect(errorRedirect);
+    }
+
+    const userId = session.user.id;
+    console.log('✅ 用戶登入成功:', userId);
+
+    // 檢查是否為新用戶 (user_profile 是否存在)
+    const checkQuery = `
+      query CheckUserProfile($userId: uuid!) {
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          user_id
+          member_level
+        }
+      }
+    `;
+
+    const { data: checkData } = await graphqlRequest(checkQuery, { userId });
+    const isNewUser = !checkData?.user_profiles || checkData.user_profiles.length === 0;
+
+    if (isNewUser) {
+      console.log('🎉 新用戶，建立 user_profile...');
+      // 建立 user_profile（應該由觸發器自動建立，這裡是備用）
+      const createProfileQuery = `
+        mutation CreateUserProfile($userId: uuid!, $email: String, $displayName: String) {
+          insert_user_profiles_one(
+            object: {
+              user_id: $userId
+              member_level: "beginner"
+              remaining_analyses: 3
+              total_analyses: 0
+              subscription_type: "free"
+            }
+            on_conflict: {
+              constraint: user_profiles_pkey
+              update_columns: [member_level]
+            }
+          ) {
+            user_id
+            member_level
+            remaining_analyses
+          }
+        }
+      `;
+      
+      await graphqlRequest(createProfileQuery, {
+        userId,
+        email: session.user.email,
+        displayName: session.user.displayName
+      });
+    }
+
+    // 更新最後登入時間
+    const updateLoginQuery = `
+      mutation UpdateLastLogin($userId: uuid!) {
+        update_user_profiles(
+          where: { user_id: { _eq: $userId } }
+          _set: { last_login: "now()" }
+        ) {
+          affected_rows
+        }
+      }
+    `;
+    await graphqlRequest(updateLoginQuery, { userId });
+
+    // 重定向回前端，帶上 tokens
+    const redirectUrl = `${frontendRedirect || 'http://localhost:3001'}?refreshToken=${encodeURIComponent(refreshToken)}&newUser=${isNewUser}`;
+    
+    console.log('🔄 重定向到:', redirectUrl);
+    res.redirect(redirectUrl);
+
+  } catch (error) {
+    console.error('❌ OAuth Callback 錯誤:', error);
+    const errorRedirect = `${req.query.frontendRedirect || 'http://localhost:3001'}?error=oauth_failed`;
+    res.redirect(errorRedirect);
+  }
+});
+
+// ========================================
+// 使用 Refresh Token 換取 Access Token
+// ========================================
+router.post('/auth/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_REFRESH_TOKEN',
+          message: '缺少 refreshToken'
+        }
+      });
+    }
+
+    // 使用 Nhost SDK 刷新 session
+    const { body } = await nhost.auth.refreshSession(refreshToken);
+    const session = body.session;
+
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        error: {
+          code: 'INVALID_REFRESH_TOKEN',
+          message: 'refreshToken 無效或已過期'
+        }
+      });
+    }
+
+    // 取得用戶完整資料
+    const query = `
+      query GetUserWithProfile($userId: uuid!) {
+        user(id: $userId) {
+          id
+          email
+          displayName
+          avatarUrl
+        }
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          member_level
+          subscription_type
+          remaining_analyses
+          total_analyses
+        }
+      }
+    `;
+
+    const { data: userData } = await graphqlRequest(query, { userId: session.user.id });
+    const user = userData?.user;
+    const profile = userData?.user_profiles?.[0];
+
+    res.json({
+      success: true,
+      data: {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          memberLevel: profile?.member_level || 'beginner',
+          subscriptionType: profile?.subscription_type || 'free',
+          remainingAnalyses: profile?.remaining_analyses || 0,
+          totalAnalyses: profile?.total_analyses || 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Token 刷新錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'REFRESH_FAILED',
+        message: 'Token 刷新失敗'
       }
     });
   }
