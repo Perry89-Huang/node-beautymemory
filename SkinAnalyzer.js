@@ -798,110 +798,228 @@ class SkinAnalyzer {
   }
 
   /**
-   * 計算水潤度分數
+   * 計算水潤度分數（基於皮膚屏障功能評估）
    * @param {Object} result - 分析結果
    * @returns {number} 水潤度分數 (0-100)
    */
   calculateHydrationScore(result) {
     const scores = [];
+    const weights = [];
     
-    // 毛孔越大，代表水分越少
+    // === 1. 毛孔狀態（主要指標，權重 1.3）===
+    // 毛孔擴大通常與皮膚缺水、油脂分泌過度相關
     const poreFields = ['pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'];
+    let poreCount = 0;
+    let poreIssues = 0;
+    
     poreFields.forEach(field => {
       if (result[field]?.value !== undefined) {
-        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+        poreCount++;
+        if (result[field].value === 1) poreIssues++;
       }
     });
     
-    // 黑頭問題影響水潤度
-    if (result.blackhead?.value !== undefined) {
-      scores.push(Math.max(0, 100 - (result.blackhead.value * 15)));
+    if (poreCount > 0) {
+      // 根據有問題的毛孔區域比例計分
+      const poreRatio = poreIssues / poreCount;
+      let score;
+      if (poreRatio === 0) score = 95;          // 無毛孔問題
+      else if (poreRatio <= 0.25) score = 85;   // 1個區域
+      else if (poreRatio <= 0.5) score = 70;    // 2個區域
+      else if (poreRatio <= 0.75) score = 55;   // 3個區域
+      else score = 40;                          // 4個區域均有問題
+      
+      scores.push(score);
+      weights.push(1.3);
     }
     
-    // 閉口粉刺影響水潤度
+    // === 2. 黑頭問題（權重 1.2）===
+    // 黑頭與皮膚水油平衡、角質代謝相關
+    if (result.blackhead?.value !== undefined) {
+      const blackheadScores = [95, 80, 60, 40]; // 0=無, 1=輕度, 2=中度, 3=嚴重
+      scores.push(blackheadScores[result.blackhead.value] || 70);
+      weights.push(1.2);
+    }
+    
+    // === 3. 閉口粉刺（權重 1.0）===
+    // 閉口粉刺與皮膚代謝、水分不足相關
     if (result.closed_comedones?.rectangle) {
       const count = result.closed_comedones.rectangle.length;
-      scores.push(Math.max(60, 100 - (count * 3)));
+      let score;
+      if (count === 0) score = 95;
+      else if (count <= 3) score = 80;
+      else if (count <= 8) score = 65;
+      else if (count <= 15) score = 50;
+      else score = 35;
+      scores.push(score);
+      weights.push(1.0);
     }
     
-    return scores.length > 0
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 80;
+    // === 計算加權平均 ===
+    if (scores.length === 0) return 75;
+    
+    let weightedSum = 0;
+    let weightSum = 0;
+    for (let i = 0; i < scores.length; i++) {
+      weightedSum += scores[i] * weights[i];
+      weightSum += weights[i];
+    }
+    const avgScore = Math.round(weightedSum / weightSum);
+    
+    // 設置合理範圍：30-95 分
+    return Math.max(30, Math.min(avgScore, 95));
   }
 
   /**
-   * 計算光澤度分數
+   * 計算光澤度分數（基於膚色均勻度與色素評估）
    * @param {Object} result - 分析結果
    * @returns {number} 光澤度分數 (0-100)
    */
   calculateRadianceScore(result) {
     const scores = [];
+    const weights = [];
     
-    // 斑點影響光澤度
+    // === 1. 色素沉積 - 斑點（權重 1.4）===
+    // 斑點是影響膚色均勻度的主要因素
     if (result.skin_spot?.rectangle) {
       const count = result.skin_spot.rectangle.length;
-      scores.push(Math.max(50, 100 - (count * 2)));
+      let score;
+      if (count === 0) score = 95;
+      else if (count <= 3) score = 85;      // 輕微
+      else if (count <= 8) score = 70;      // 輕度
+      else if (count <= 15) score = 55;     // 中度
+      else if (count <= 25) score = 40;     // 中重度
+      else score = 30;                      // 嚴重
+      scores.push(score);
+      weights.push(1.4);
+    } else {
+      scores.push(90);
+      weights.push(1.4);
     }
     
-    // 痘痘影響光澤度
+    // === 2. 炎症反應 - 痘痘（權重 1.2）===
+    // 痘痘會導致炎症後色素沉積，影響光澤
     if (result.acne?.rectangle) {
       const count = result.acne.rectangle.length;
-      scores.push(Math.max(60, 100 - (count * 3)));
+      let score;
+      if (count === 0) score = 95;
+      else if (count <= 2) score = 80;
+      else if (count <= 5) score = 65;
+      else if (count <= 10) score = 50;
+      else score = 35;
+      scores.push(score);
+      weights.push(1.2);
+    } else {
+      scores.push(90);
+      weights.push(1.2);
     }
     
-    // 黑眼圈影響整體光澤感
+    // === 3. 眼周色素 - 黑眼圈（權重 1.1）===
     if (result.dark_circle?.value !== undefined) {
-      scores.push(result.dark_circle.value === 0 ? 100 : 80);
+      const score = result.dark_circle.value === 0 ? 95 : 65;
+      scores.push(score);
+      weights.push(1.1);
     }
     
-    // 膚色均勻度（如果有 ITA 值）
-    if (result.skintone_ita?.value !== undefined) {
-      // ITA 值越穩定代表膚色越均勻，光澤度越好
-      scores.push(85); // 有檢測到就給基礎分
+    // === 4. 膚色均勻度 - ITA 值（權重 1.0）===
+    if (result.skintone_ita?.ITA !== undefined) {
+      const skintone = result.skintone_ita.skintone;
+      // skintone: 0-5 正常範圍, 6 異常（光線不佳）
+      const score = skintone === 6 ? 60 : 85;
+      scores.push(score);
+      weights.push(1.0);
     }
     
-    return scores.length > 0
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 80;
+    // === 計算加權平均 ===
+    if (scores.length === 0) return 75;
+    
+    let weightedSum = 0;
+    let weightSum = 0;
+    for (let i = 0; i < scores.length; i++) {
+      weightedSum += scores[i] * weights[i];
+      weightSum += weights[i];
+    }
+    const avgScore = Math.round(weightedSum / weightSum);
+    
+    // 設置合理範圍：30-95 分
+    return Math.max(30, Math.min(avgScore, 95));
   }
 
   /**
-   * 計算緊緻度分數
+   * 計算緊緻度分數（基於皺紋與老化評估）
    * @param {Object} result - 分析結果
    * @returns {number} 緊緻度分數 (0-100)
    */
   calculateFirmnessScore(result) {
     const scores = [];
+    const weights = [];
     
-    // 皺紋是緊緻度的主要指標
-    const wrinkleFields = [
-      'forehead_wrinkle', 'crows_feet', 'nasolabial_fold',
-      'eye_finelines', 'glabella_wrinkle'
+    // === 1. 静態皺紋（權重 1.3）===
+    const staticWrinkles = [
+      { key: 'forehead_wrinkle', name: '抬頭紋', weight: 1.2 },
+      { key: 'glabella_wrinkle', name: '眉間紋', weight: 1.1 }
     ];
-    wrinkleFields.forEach(field => {
-      if (result[field]?.value !== undefined) {
-        scores.push(Math.max(0, 100 - (result[field].value * 20)));
+    
+    staticWrinkles.forEach(item => {
+      if (result[item.key]?.value !== undefined) {
+        const score = result[item.key].value === 0 ? 95 : 70;
+        scores.push(score);
+        weights.push(item.weight);
       }
     });
     
-    // 眼袋影響緊緻度
+    // === 2. 動態皺紋（權重 1.4）===
+    const dynamicWrinkles = [
+      { key: 'crows_feet', name: '魚尾紋', weight: 1.4 },
+      { key: 'nasolabial_fold', name: '法令紋', weight: 1.5 },
+      { key: 'eye_finelines', name: '眼周細紋', weight: 1.3 }
+    ];
+    
+    dynamicWrinkles.forEach(item => {
+      if (result[item.key]?.value !== undefined) {
+        let score = result[item.key].value === 0 ? 95 : 70;
+        
+        // 法令紋特殊處理：根據嚴重度調整
+        if (item.key === 'nasolabial_fold' && result[item.key].value === 1) {
+          if (result.nasolabial_fold_severity?.value !== undefined) {
+            const severity = result.nasolabial_fold_severity.value;
+            score = severity === 0 ? 75 : severity === 1 ? 60 : 45;
+          }
+        }
+        
+        scores.push(score);
+        weights.push(item.weight);
+      }
+    });
+    
+    // === 3. 眼袋（權重 1.2）===
     if (result.eye_pouch?.value !== undefined) {
-      scores.push(Math.max(0, 100 - (result.eye_pouch.value * 20)));
+      let score = 95;
+      if (result.eye_pouch.value === 1) {
+        if (result.eye_pouch_severity?.value !== undefined) {
+          const severity = result.eye_pouch_severity.value;
+          score = severity === 0 ? 75 : severity === 1 ? 60 : 45;
+        } else {
+          score = 70;
+        }
+      }
+      scores.push(score);
+      weights.push(1.2);
     }
     
-    // 法令紋嚴重度
-    if (result.nasolabial_fold_severity?.value !== undefined) {
-      scores.push(Math.max(0, 100 - (result.nasolabial_fold_severity.value * 20)));
-    }
+    // === 計算加權平均 ===
+    if (scores.length === 0) return 75;
     
-    // 眼袋嚴重度
-    if (result.eye_pouch_severity?.value !== undefined) {
-      scores.push(Math.max(0, 100 - (result.eye_pouch_severity.value * 20)));
+    let weightedSum = 0;
+    let weightSum = 0;
+    for (let i = 0; i < scores.length; i++) {
+      weightedSum += scores[i] * weights[i];
+      weightSum += weights[i];
     }
+    const avgScore = Math.round(weightedSum / weightSum);
     
-    return scores.length > 0
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 80;
+    // 設置合理範圍：30-95 分
+    return Math.max(30, Math.min(avgScore, 95));
   }
 
   /**
@@ -1020,85 +1138,161 @@ class SkinAnalyzer {
   }
 
   /**
-   * 計算整體評分
+   * 計算整體評分（基於皮膚病學標準）
    * @param {Object} result - 分析結果
    * @returns {number} 整體評分 (0-100)
    */
   calculateOverallScore(result) {
     const scores = [];
+    const weights = []; // 權重系統
     
-    // 通用計分函數：0=100分, 1=80分, 2=60分, 3=40分
-    const calculateItemScore = (value) => {
+    // 通用計分函數 - 根據 AILab API 返回的值類型
+    // 二元值 (0/1)：0=100分, 1=75分 (降低基礎分以避免過高)
+    const calculateBinaryScore = (value) => {
       if (value === undefined || value === null) return null;
-      // 確保分數不低於 0
-      return Math.max(0, 100 - (value * 20));
+      return value === 0 ? 100 : 75;
+    };
+    
+    // 多級值 (0-3)：根據臨床嚴重度分級
+    const calculateMultiLevelScore = (value) => {
+      if (value === undefined || value === null) return null;
+      const scores = [100, 75, 55, 35]; // 0=優秀, 1=良好, 2=中度, 3=嚴重
+      return scores[value] || 50;
     };
 
-    // 1. 皺紋類 (權重較高)
+    // === 1. 老化指標（權重 1.5）===
     const wrinkleFields = [
-      'forehead_wrinkle', 'crows_feet', 'nasolabial_fold', 
-      'eye_finelines', 'glabella_wrinkle'
+      { key: 'forehead_wrinkle', name: '抬頭紋' },
+      { key: 'crows_feet', name: '魚尾紋' },
+      { key: 'nasolabial_fold', name: '法令紋' },
+      { key: 'eye_finelines', name: '眼周細紋' },
+      { key: 'glabella_wrinkle', name: '眉間紋' }
     ];
+    
     wrinkleFields.forEach(field => {
-      if (result[field]?.value !== undefined) {
-        scores.push(calculateItemScore(result[field].value));
+      if (result[field.key]?.value !== undefined) {
+        const score = calculateBinaryScore(result[field.key].value);
+        if (score !== null) {
+          scores.push(score);
+          weights.push(1.5); // 老化皺紋是重要指標
+        }
       }
     });
     
-    // 2. 眼部問題
+    // === 2. 眼部問題（權重 1.3）===
     if (result.eye_pouch?.value !== undefined) {
-      scores.push(calculateItemScore(result.eye_pouch.value));
-    }
-    if (result.dark_circle?.value !== undefined) {
-      // 黑眼圈通常 0=無, 1=色素, 2=血管, 3=陰影，都算有問題
-      // 若 value=0 給 100，其他給 75
-      const score = result.dark_circle.value === 0 ? 100 : 75;
+      let score = 100;
+      if (result.eye_pouch.value === 1) {
+        // 根據嚴重度細分
+        if (result.eye_pouch_severity?.value !== undefined) {
+          const severity = result.eye_pouch_severity.value;
+          score = severity === 0 ? 70 : severity === 1 ? 55 : 40;
+        } else {
+          score = 65; // 沒有嚴重度資料時的預設分數
+        }
+      }
       scores.push(score);
+      weights.push(1.3);
     }
     
-    // 3. 毛孔類
+    // 黑眼圈 (多級值)
+    if (result.dark_circle?.value !== undefined) {
+      const score = result.dark_circle.value === 0 ? 100 : 70;
+      scores.push(score);
+      weights.push(1.2);
+    }
+    
+    // === 3. 毛孔問題（權重 1.0）===
     const poreFields = [
       'pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'
     ];
+    let poreCount = 0;
+    let poreSum = 0;
     poreFields.forEach(field => {
       if (result[field]?.value !== undefined) {
-        scores.push(calculateItemScore(result[field].value));
+        poreSum += calculateBinaryScore(result[field].value);
+        poreCount++;
       }
     });
-    
-    // 4. 瑕疵類 (黑頭、痘痘、斑點)
-    if (result.blackhead?.value !== undefined) {
-      scores.push(calculateItemScore(result.blackhead.value));
+    if (poreCount > 0) {
+      scores.push(Math.round(poreSum / poreCount));
+      weights.push(1.0);
     }
     
-    // 痘痘 - 根據數量扣分
+    // === 4. 瑕疵問題（權重 1.2）===
+    // 黑頭
+    if (result.blackhead?.value !== undefined) {
+      const score = calculateMultiLevelScore(result.blackhead.value);
+      if (score !== null) {
+        scores.push(score);
+        weights.push(1.2);
+      }
+    }
+    
+    // 痘痘 - 根據臨床嚴重度分級
     if (result.acne?.rectangle) {
       const count = result.acne.rectangle.length;
-      // 0顆=100, 每增加1顆扣5分, 最低40分
-      const score = Math.max(40, 100 - (count * 5));
+      let score;
+      if (count === 0) score = 100;
+      else if (count <= 2) score = 85;      // 輕微
+      else if (count <= 5) score = 70;      // 輕度
+      else if (count <= 10) score = 55;     // 中度
+      else if (count <= 20) score = 40;     // 中重度
+      else score = 30;                      // 嚴重
       scores.push(score);
+      weights.push(1.3); // 痘痘是重要指標
     }
     
-    // 斑點 - 根據數量扣分
+    // 斑點 - 根據臨床分級
     if (result.skin_spot?.rectangle) {
       const count = result.skin_spot.rectangle.length;
-      // 0顆=100, 每增加1顆扣3分, 最低40分
-      const score = Math.max(40, 100 - (count * 3));
+      let score;
+      if (count === 0) score = 100;
+      else if (count <= 3) score = 85;      // 輕微
+      else if (count <= 8) score = 70;      // 輕度
+      else if (count <= 15) score = 55;     // 中度
+      else if (count <= 25) score = 45;     // 中重度
+      else score = 35;                      // 嚴重
       scores.push(score);
+      weights.push(1.1);
     }
 
     // 閉口粉刺
     if (result.closed_comedones?.rectangle) {
       const count = result.closed_comedones.rectangle.length;
-      const score = Math.max(40, 100 - (count * 5));
+      let score;
+      if (count === 0) score = 100;
+      else if (count <= 3) score = 80;
+      else if (count <= 8) score = 65;
+      else if (count <= 15) score = 50;
+      else score = 35;
       scores.push(score);
+      weights.push(1.1);
     }
 
-    // 移除 skin_color (膚色) 和 skin_age (膚齡) 的評分，因為它們不是膚質好壞的直接指標
-
-    return scores.length > 0
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 80; // 默認 80 分
+    // === 計算加權平均分數 ===
+    if (scores.length === 0) return 75; // 預設分數
+    
+    let weightedSum = 0;
+    let weightSum = 0;
+    for (let i = 0; i < scores.length; i++) {
+      weightedSum += scores[i] * weights[i];
+      weightSum += weights[i];
+    }
+    const avgScore = Math.round(weightedSum / weightSum);
+    
+    // === 年齡修正（可選）===
+    let finalScore = avgScore;
+    if (result.skin_age?.value) {
+      const skinAge = result.skin_age.value;
+      // 如果膚齡在合理範圍內，給予小幅加分
+      if (skinAge >= 20 && skinAge <= 35) {
+        finalScore = Math.min(finalScore + 2, 100);
+      }
+    }
+    
+    // 設置上下限：最高 92 分（符合臨床實際），最低 25 分
+    return Math.max(25, Math.min(finalScore, 92));
   }
 
   /**
