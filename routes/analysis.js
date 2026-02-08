@@ -15,7 +15,7 @@ const SuluSkinAnalyzer = require('../SkinAnalyzer');
 const { getTaiwanHour, getTaiwanISO } = require('../utils/timezone');
 
 // 生成個人化專屬保養方案
-function generateSkincareRoutine(analysisData, overallScore, fengShuiElement, fengShuiBlessing) {
+function generateSkincareRoutine(analysisData, overallScore) {
   const routine = {
     morning: [],
     evening: [],
@@ -78,10 +78,7 @@ function generateSkincareRoutine(analysisData, overallScore, fengShuiElement, fe
   routine.lifestyle.push('💧 補充水分：每日至少 2000ml 白開水，促進新陳代謝');
   routine.lifestyle.push('🥗 均衡飲食：多攝取維生素 C、E，少吃油炸與高糖食物');
   routine.lifestyle.push('🏃 適度運動：每週 3 次有氧運動，促進血液循環');
-  
-  if (fengShuiElement && fengShuiBlessing) {
-    routine.lifestyle.push(`🔮 風水時辰：${fengShuiElement}元素加持，${fengShuiBlessing}`);
-  }
+
 
   return routine;
 }
@@ -366,15 +363,11 @@ router.post(
       }
 
       const summary = analyzer.generateSummary(analysisResult);
-      const currentHour = getTaiwanHour();
-      const fengShuiInfo = getFengShuiInfo(currentHour);
       
       // 生成個人化專屬保養方案
       const skincareRoutine = generateSkincareRoutine(
         analysisResult.data, 
-        summary.overall_score,
-        fengShuiInfo.element,
-        fengShuiInfo.blessing
+        summary.overall_score
       );
 
       // 上傳圖片到 Nhost Storage
@@ -405,8 +398,6 @@ router.post(
           $recommendations: jsonb!
           $skincareRoutine: jsonb!
           $analysisHour: Int!
-          $fengShuiElement: String!
-          $fengShuiBlessing: String!
           $createdAt: timestamp
         ) {
           insert_skin_analysis_records_one(object: {
@@ -425,8 +416,6 @@ router.post(
             recommendations: $recommendations
             skincare_routine: $skincareRoutine
             analysis_hour: $analysisHour
-            feng_shui_element: $fengShuiElement
-            feng_shui_blessing: $fengShuiBlessing
             created_at: $createdAt
           }) {
             id
@@ -455,9 +444,7 @@ router.post(
           fullAnalysisData: analysisResult.data,
           recommendations: summary.recommendations,
           skincareRoutine: skincareRoutine,
-          analysisHour: currentHour,
-          fengShuiElement: fengShuiInfo.element,
-          fengShuiBlessing: fengShuiInfo.blessing,
+          analysisHour: getTaiwanHour(),
           createdAt: getTaiwanISO()
         });
         
@@ -516,7 +503,6 @@ router.post(
             sensitivity: analysisResult.data.sensitivity
           },
           skincareRoutine: skincareRoutine,
-          fengShui: fengShuiInfo,
           quota: req.user && req.quotaInfo
             ? (req.quotaInfo.unlimited 
                 ? { unlimited: true }
@@ -716,53 +702,5 @@ router.get('/history/:recordId', authenticateToken, async (req, res) => {
 // ========================================
 // 輔助函數
 // ========================================
-
-function getFengShuiInfo(hour) {
-  const fengShuiConfig = {
-    fire: { 
-      hours: [7, 8, 9, 11, 12, 13], 
-      element: '火',
-      blessing: '離火時辰,美白提亮正當時,肌膚綻放光彩' 
-    },
-    water: { 
-      hours: [19, 20, 21, 23, 0, 1], 
-      element: '水',
-      blessing: '水元素滋養,深層保濕好時機,肌膚水潤飽滿' 
-    },
-    earth: { 
-      hours: [14, 15, 16, 17, 18], 
-      element: '土',
-      blessing: '土元素穩固,基礎保養最佳時,築牢美麗根基' 
-    },
-    metal: { 
-      hours: [2, 3, 4, 5, 6], 
-      element: '金',
-      blessing: '金元素緊緻,抗老修復好時光,肌膚重現彈性' 
-    },
-    wood: { 
-      hours: [9, 10, 11], 
-      element: '木',
-      blessing: '木元素清新,排毒淨化正當時,肌膚煥然一新' 
-    }
-  };
-
-  for (const [key, config] of Object.entries(fengShuiConfig)) {
-    if (config.hours.includes(hour)) {
-      return {
-        element: config.element,
-        blessing: config.blessing,
-        elementKey: key,
-        hour
-      };
-    }
-  }
-
-  return {
-    element: '平衡',
-    blessing: '陰陽調和,任何時刻都是美麗時刻',
-    elementKey: 'balanced',
-    hour
-  };
-}
 
 module.exports = router;

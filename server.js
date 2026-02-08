@@ -40,7 +40,7 @@ function loadKnowledgeBase() {
 
 // 初始化應用
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 2000;
 
 // ========================================
 // 中介層設定
@@ -63,6 +63,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:2000',
+  'http://10.14.210.249:3000', // 區域網路訪問
   'https://beautymemory.life',
   'https://www.beautymemory.life'
 ];
@@ -659,14 +660,16 @@ async function startServer() {
       console.warn('⚠️  警告: Nhost 連線失敗,會員功能可能無法正常運作');
     }
 
-    // 啟動伺服器
-    app.listen(PORT, () => {
+    // 啟動伺服器 - 監聽所有網路介面以允許區域網路訪問
+    app.listen(PORT, '0.0.0.0', () => {
       console.log('\n✅ 伺服器啟動成功!');
       console.log(`   監聽端口: ${PORT}`);
+      console.log(`   監聽位址: 0.0.0.0 (允許區域網路訪問)`);
       console.log(`   環境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`   時區: Asia/Taipei (台灣時間 UTC+8)`);
       console.log(`   當前時間: ${formatTaiwanTime(new Date())}`);
-      console.log(`   API 文檔: http://localhost:${PORT}/`);
+      console.log(`   本機訪問: http://localhost:${PORT}/`);
+      console.log(`   區域網路訪問: http://10.14.210.249:${PORT}/`);
       console.log('\n📋 可用功能:');
       console.log('   ✓ 會員註冊/登入系統');
       console.log('   ✓ AI 肌膚檢測 (會員專屬)');
