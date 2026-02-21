@@ -15,9 +15,9 @@ class SkinAnalyzer {
   /**
    * 初始化分析器
    * @param {string} apiKey - API 金鑰(可選,會從環境變數讀取)
-   * @param {string} version - API 版本 ('basic' 或 'advanced'，默認 'advanced')
+   * @param {string} version - API 版本 ('basic', 'advanced' 或 'pro'，默認 'pro')
    */
-  constructor(apiKey = null, version = 'advanced') {
+  constructor(apiKey = null, version = 'pro') {
     // 支援兩種環境變數名稱(向後兼容)
     this.apiKey = apiKey || process.env.AILAB_API_KEY ;
     
@@ -26,13 +26,20 @@ class SkinAnalyzer {
     }
     
     // 設置 API 版本
-    this.version = version === 'basic' ? 'basic' : 'advanced';
+    if (version === 'basic') {
+      this.version = 'basic';
+    } else if (version === 'advanced') {
+      this.version = 'advanced';
+    } else {
+      this.version = 'pro';
+    }
     
     // AILabTools API 配置
     this.baseURL = 'https://www.ailabapi.com';
     this.endpoints = {
       basic: '/api/portrait/analysis/skin-analysis',
-      advanced: '/api/portrait/analysis/skin-analysis-advanced'
+      advanced: '/api/portrait/analysis/skin-analysis-advanced',
+      pro: '/api/portrait/analysis/skin-analysis-pro'
     };
     this.endpoint = this.endpoints[this.version];
     this.timeout = 30000; // 30 秒
@@ -43,7 +50,8 @@ class SkinAnalyzer {
     const maskedKey = this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'NOT_SET';
     console.log(`🔧 AILabTools Skin Analyzer 配置:`);
     console.log(`   - Provider: AILabTools `);
-    console.log(`   - Version: ${this.version === 'basic' ? '基礎版' : '專業版'} (${this.version})`);
+    const versionName = this.version === 'basic' ? '基礎版' : (this.version === 'pro' ? 'Pro 版' : '進階版');
+    console.log(`   - Version: ${versionName} (${this.version})`);
     console.log(`   - Base URL: ${this.baseURL}`);
     console.log(`   - Endpoint: ${this.endpoint}`);
     console.log(`   - API Key: ${maskedKey}`);
@@ -53,12 +61,19 @@ class SkinAnalyzer {
 
   /**
    * 設置 API 版本
-   * @param {string} version - API 版本 ('basic' 或 'advanced')
+   * @param {string} version - API 版本 ('basic', 'advanced' 或 'pro')
    */
   setVersion(version) {
-    this.version = version === 'basic' ? 'basic' : 'advanced';
+    if (version === 'basic') {
+      this.version = 'basic';
+    } else if (version === 'advanced') {
+      this.version = 'advanced';
+    } else {
+      this.version = 'pro';
+    }
     this.endpoint = this.endpoints[this.version];
-    console.log(`🔄 切換到 ${this.version === 'basic' ? '基礎版' : '專業版'} API`);
+    const versionName = this.version === 'basic' ? '基礎版' : (this.version === 'pro' ? 'Pro 版' : '進階版');
+    console.log(`🔄 切換到 ${versionName} API`);
   }
 
   /**
@@ -94,7 +109,7 @@ class SkinAnalyzer {
         throw new Error('Only JPG/JPEG format is supported');
       }
 
-      // 驗證檔案大小 (基礎版 2MB，專業版 5MB)
+      // 驗證檔案大小 (基礎版 2MB，Pro/進階版 5MB)
       const maxSize = this.version === 'basic' ? 2 : 5;
       const stats = fs.statSync(imagePath);
       const sizeInMB = stats.size / (1024 * 1024);
@@ -147,7 +162,7 @@ class SkinAnalyzer {
     }
     
     try {
-      // 驗證 Buffer 大小 (基礎版 2MB，專業版 5MB)
+      // 驗證 Buffer 大小 (基礎版 2MB，Pro/進階版 5MB)
       const maxSize = this.version === 'basic' ? 2 : 5;
       const sizeInMB = imageBuffer.length / (1024 * 1024);
       if (sizeInMB > maxSize) {
@@ -186,8 +201,8 @@ class SkinAnalyzer {
         contentType: 'image/jpeg'
       });
       
-      // Request red area map for sensitivity visualization
-      if (this.version === 'advanced') {
+      // Request red area map for sensitivity visualization (進階版和Pro版)
+      if (this.version === 'advanced' || this.version === 'pro') {
         formData.append('return_maps', 'red_area');
       }
 
@@ -236,7 +251,15 @@ class SkinAnalyzer {
         };
       }
 
-      return this.processResponse(response.data);
+      const rawString = JSON.stringify(response.data);
+      console.log('🔍 [RAW_PRO_API_RESPONSE] Pro API 完整回傳字串:');
+      console.log(rawString);
+
+      const processed = this.processResponse(response.data);
+      if (processed.success) {
+        processed.raw_string = rawString;
+      }
+      return processed;
     } catch (error) {
       const duration = Date.now() - startTime;
       console.error(`❌ API 請求失敗 (${duration}ms):`);
@@ -432,6 +455,7 @@ class SkinAnalyzer {
     if (this.version === 'basic') {
       return this.convertBasicToUnifiedFormat(ailabResult);
     } else {
+      // Advanced 和 Pro 版本使用相同的格式轉換
       return this.convertAdvancedToUnifiedFormat(ailabResult);
     }
   }

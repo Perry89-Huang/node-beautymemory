@@ -1,0 +1,20 @@
+# 自動處理換行符
+* text=auto
+
+# JavaScript 文件使用 LF
+*.js text eol=lf
+*.json text eol=lf
+
+# Shell 腳本使用 LF
+*.sh text eol=lf
+
+# Windows 批次文件使用 CRLF
+*.bat text eol=crlf
+
+# 圖片等二進制文件
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

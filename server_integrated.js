@@ -62,7 +62,7 @@ const upload = multer({
 let skinAnalyzer;
 try {
   const apiKey = process.env.AILAB_API_KEY || process.env.SULU_API_KEY;
-  const apiVersion = process.env.SKIN_ANALYSIS_VERSION || 'advanced';
+  const apiVersion = process.env.SKIN_ANALYSIS_VERSION || 'pro';
   skinAnalyzer = new SuluSkinAnalyzer(apiKey, apiVersion);
   console.log('✅ AILabTools Skin Analyzer 初始化成功');
 } catch (error) {

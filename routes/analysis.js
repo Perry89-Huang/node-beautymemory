@@ -502,6 +502,7 @@ router.post(
             face_maps: analysisResult.data.face_maps,
             sensitivity: analysisResult.data.sensitivity
           },
+          raw_pro_api_response: analysisResult.raw_string || null,
           skincareRoutine: skincareRoutine,
           quota: req.user && req.quotaInfo
             ? (req.quotaInfo.unlimited 
