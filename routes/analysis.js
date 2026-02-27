@@ -373,12 +373,36 @@ router.post(
       // 上傳圖片到 Nhost Storage
       let imageUrl = null;
       try {
-        // 跳過圖片上傳功能，直接使用 null
-        // Nhost storage API 需要特殊配置，暫時省略
-        console.log('⚠️  圖片上傳功能已停用');
+        const FormData = require('form-data');
+        const NHOST_SUBDOMAIN = process.env.NHOST_SUBDOMAIN;
+        const NHOST_REGION    = process.env.NHOST_REGION || 'ap-southeast-1';
+        const uploadForm = new FormData();
+        uploadForm.append('file[]', req.file.buffer, {
+          filename: `skin_${Date.now()}.jpg`,
+          contentType: req.file.mimetype || 'image/jpeg'
+        });
+        const uploadResp = await axios.post(
+          `https://${NHOST_SUBDOMAIN}.storage.${NHOST_REGION}.nhost.run/v1/files`,
+          uploadForm,
+          {
+            headers: {
+              ...uploadForm.getHeaders(),
+              'x-hasura-admin-secret': process.env.NHOST_ADMIN_SECRET
+            },
+            timeout: 15000
+          }
+        );
+        const fileId = uploadResp.data?.processedFiles?.[0]?.id;
+        if (fileId) {
+          imageUrl = `https://${NHOST_SUBDOMAIN}.storage.${NHOST_REGION}.nhost.run/v1/files/${fileId}`;
+          console.log('✅ 圖片已上傳至 Nhost Storage:', imageUrl);
+        }
       } catch (uploadError) {
-        console.error('圖片上傳錯誤:', uploadError);
+        console.warn('⚠️  圖片上傳失敗（分析結果仍有效）:', uploadError.message);
       }
+
+      // 接收前端縮圖（base64 data URL），存入 full_analysis_data
+      const thumbnailData = req.body?.thumbnail || null;
 
       // 儲存分析記錄
       const saveQuery = `
@@ -441,7 +465,9 @@ router.post(
           wrinklesScore: summary.scores?.wrinkles,
           poresScore: summary.scores?.pores,
           pigmentationScore: summary.scores?.pigmentation,
-          fullAnalysisData: analysisResult.data,
+          fullAnalysisData: thumbnailData
+            ? { ...analysisResult.data, _thumbnail: thumbnailData }
+            : analysisResult.data,
           recommendations: summary.recommendations,
           skincareRoutine: skincareRoutine,
           analysisHour: getTaiwanHour(),

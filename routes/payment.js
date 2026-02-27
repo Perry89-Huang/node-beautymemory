@@ -25,48 +25,14 @@ const PLANS = {
     price: 299,
     duration: '30 天',
     analyses: 30,
-    description: '每月 30 次 AI 肌膚檢測',
+    description: '30 天 30 次 AI 肌膚檢測',
     features: [
       '每日 AI 肌膚檢測',
       '個人化護膚建議',
       '肌膚數據追蹤',
       '專業分析報告'
     ],
-    recommended: false
-  },
-  expert: {
-    name: '高級會員方案',
-    price: 999,
-    duration: '90 天',
-    analyses: 100,
-    description: '三個月 100 次 AI 肌膚檢測',
-    features: [
-      '每日 AI 肌膚檢測',
-      '個人化護膚建議',
-      '肌膚數據追蹤',
-      '專業分析報告',
-      '優先客服支援',
-      '產品推薦服務'
-    ],
     recommended: true
-  },
-  enterprise: {
-    name: '企業版方案',
-    price: 2999,
-    duration: '365 天',
-    analyses: -1, // 無限次
-    description: '一年無限次 AI 肌膚檢測',
-    features: [
-      '無限次 AI 肌膚檢測',
-      '個人化護膚建議',
-      '肌膚數據追蹤',
-      '專業分析報告',
-      '優先客服支援',
-      '產品推薦服務',
-      'API 存取權限',
-      '專屬美容顧問'
-    ],
-    recommended: false
   }
 };
 

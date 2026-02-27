@@ -532,6 +532,32 @@ class SkinAnalyzer {
       skin_age: ailabResult.skin_age,
       // 膚質
       skin_type: ailabResult.skin_type,
+      // === Pro API 六力評分 ===
+      score_info: ailabResult.score_info,
+      // === Pro API 油性強度 ===
+      oily_intensity: ailabResult.oily_intensity,
+      // === Pro API 水分 ===
+      water: ailabResult.water,
+      // === Pro API 黑色素 ===
+      melanin: ailabResult.melanin,
+      // === Pro API 斑點類型 ===
+      brown_spot: ailabResult.brown_spot,
+      freckle: ailabResult.freckle,
+      melasma: ailabResult.melasma,
+      // === Pro API 痘痘詳細 ===
+      acne_pustule: ailabResult.acne_pustule,
+      acne_nodule: ailabResult.acne_nodule,
+      acne_mark: ailabResult.acne_mark,
+      blackhead_count: ailabResult.blackhead_count,
+      // === Pro API 皺紋嚴重度 ===
+      left_crows_feet_severity: ailabResult.left_crows_feet_severity,
+      right_crows_feet_severity: ailabResult.right_crows_feet_severity,
+      forehead_wrinkle_severity: ailabResult.forehead_wrinkle_severity,
+      glabella_wrinkle_severity: ailabResult.glabella_wrinkle_severity,
+      left_eye_finelines_severity: ailabResult.left_eye_finelines_severity,
+      right_eye_finelines_severity: ailabResult.right_eye_finelines_severity,
+      forehead_wrinkle_info: ailabResult.forehead_wrinkle_info,
+      wrinkle_count: ailabResult.wrinkle_count,
       // 雙眼皮
       left_eyelids: ailabResult.left_eyelids,
       right_eyelids: ailabResult.right_eyelids,
