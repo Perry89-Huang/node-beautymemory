@@ -409,7 +409,10 @@ router.post(
       // 6 張合計約 90-240 KB，在 Hasura JSONB 欄位可接受範圍內
       const sharp = require('sharp');
       let compressedFaceMaps = {};
-      const rawFaceMaps = analysisResult.data?.face_maps;
+      // ⚠️ AILab Pro API 將 face_maps 放在 result 內部（data.result.face_maps），
+      //    而非頂層 data.face_maps（後者為 null）。需從 result 內讀取。
+      const rawFaceMaps = analysisResult.data?.result?.face_maps || analysisResult.data?.face_maps;
+      console.log(`🗺️ rawFaceMaps 來源: ${analysisResult.data?.result?.face_maps ? 'result內部' : analysisResult.data?.face_maps ? '頂層' : '無'}, keys: ${rawFaceMaps ? Object.keys(rawFaceMaps).join(', ') : '(無)'}`);
       if (rawFaceMaps) {
         const faceMapKeys = [
           'texture_enhanced_oily_area',
@@ -524,8 +527,17 @@ router.post(
       if (req.user && req.user.id) {
         try {
           // 移除 face_maps（大型 base64 圖片），避免 JSONB 欄位過大導致 Hasura 拒絕或查詢緩慢
+          // face_maps 在 AILab API 中存於 result 內部，以及可能的頂層，兩處都需清除
           const analysisDataForDB = { ...analysisResult.data };
-          delete analysisDataForDB.face_maps;
+          delete analysisDataForDB.face_maps;  // 頂層（通常為 null，預防性清除）
+          if (analysisDataForDB.result?.face_maps) {
+            // result 內部有 face_maps（raw base64，很大），需深拷貝後移除
+            analysisDataForDB.result = { ...analysisDataForDB.result };
+            delete analysisDataForDB.result.face_maps;
+          }
+          // 壓縮版 face_maps 將以 compressedFaceMaps 獨立欄位存回
+          const faceMapCount = Object.keys(compressedFaceMaps).length;
+          console.log(`💾 準備存入 DB：compressedFaceMaps 有 ${faceMapCount} 張, result.face_maps 已清除`);
 
           const { data: recordData } = await graphqlRequest(saveQuery, {
             userId: req.user.id,
