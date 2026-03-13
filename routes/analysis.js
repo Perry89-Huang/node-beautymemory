@@ -404,6 +404,62 @@ router.post(
       // 接收前端縮圖（base64 data URL），存入 full_analysis_data
       const thumbnailData = req.body?.thumbnail || null;
 
+      // ── 用 sharp 壓縮 face_maps，直接存入 DB（無需 Storage 容量）─────────────
+      // 每張壓縮至 400px 寬、JPEG Q55，約 15-40 KB / 張（原始約 100-400 KB）
+      // 6 張合計約 90-240 KB，在 Hasura JSONB 欄位可接受範圍內
+      const sharp = require('sharp');
+      let compressedFaceMaps = {};
+      const rawFaceMaps = analysisResult.data?.face_maps;
+      if (rawFaceMaps) {
+        const faceMapKeys = [
+          'texture_enhanced_oily_area',
+          'water_area',
+          'brown_area',
+          'texture_enhanced_lines',
+          'red_area',
+          'roi_outline_map'
+        ];
+        await Promise.all(faceMapKeys.map(async (key) => {
+          const base64Data = rawFaceMaps[key];
+          if (!base64Data) return;
+          try {
+            const pureBase64 = base64Data.replace(/^data:image\/[a-z+]+;base64,/, '');
+            const imgBuffer  = Buffer.from(pureBase64, 'base64');
+            const compressed = await sharp(imgBuffer)
+              .resize({ width: 400, withoutEnlargement: true })
+              .jpeg({ quality: 55 })
+              .toBuffer();
+            compressedFaceMaps[key] = `data:image/jpeg;base64,${compressed.toString('base64')}`;
+          } catch (compressErr) {
+            console.warn(`⚠️  face_map[${key}] 壓縮失敗，跳過:`, compressErr.message);
+          }
+        }));
+        const count = Object.keys(compressedFaceMaps).length;
+        if (count > 0) {
+          console.log(`✅ face_maps 已壓縮完成 (${count} 張)，將存入 DB`);
+        }
+      }
+
+      // ── 計算六力分數（與 SkinAnalysisReport.tsx 的 sixForces 邏輯一致）──────
+      const scoreInfo = analysisResult.data?.result?.score_info || {};
+      const rawAcneScore    = scoreInfo.acne_score            ?? 50;
+      const blackheadCnt    = analysisResult.data?.result?.blackhead_count ?? 0;
+      const comedoneCnt     = analysisResult.data?.result?.closed_comedones?.count ?? 0;
+      const acneMarkCnt     = analysisResult.data?.result?.acne_mark?.count ?? 0;
+      const blackheadPenalty = Math.min(25, Math.floor(blackheadCnt / 2));
+      const comedonePenalty  = Math.min(8,  comedoneCnt * 2);
+      const markPenalty      = Math.min(5,  acneMarkCnt);
+      const adjustedAcneScore = Math.max(0, rawAcneScore - blackheadPenalty - comedonePenalty - markPenalty);
+
+      const sixForceScores = {
+        oil:         Math.round(scoreInfo.oily_intensity_score ?? 50),
+        moisture:    Math.round(scoreInfo.water_score          ?? 50),
+        pigment:     Math.round(scoreInfo.melanin_score        ?? 50),
+        wrinkle:     Math.round(scoreInfo.wrinkle_score        ?? 50),
+        sensitivity: Math.round(scoreInfo.sensitivity_score    ?? 50),
+        acne:        Math.round(adjustedAcneScore),
+      };
+
       // 儲存分析記錄
       const saveQuery = `
         mutation SaveAnalysisRecord(
@@ -418,6 +474,12 @@ router.post(
           $wrinklesScore: Int
           $poresScore: Int
           $pigmentationScore: Int
+          $scoreOil: Int
+          $scoreMoisture: Int
+          $scorePigment: Int
+          $scoreWrinkle: Int
+          $scoreSensitivity: Int
+          $scoreAcne: Int
           $fullAnalysisData: jsonb!
           $recommendations: jsonb!
           $skincareRoutine: jsonb!
@@ -436,6 +498,12 @@ router.post(
             wrinkles_score: $wrinklesScore
             pores_score: $poresScore
             pigmentation_score: $pigmentationScore
+            score_oil: $scoreOil
+            score_moisture: $scoreMoisture
+            score_pigment: $scorePigment
+            score_wrinkle: $scoreWrinkle
+            score_sensitivity: $scoreSensitivity
+            score_acne: $scoreAcne
             full_analysis_data: $fullAnalysisData
             recommendations: $recommendations
             skincare_routine: $skincareRoutine
@@ -450,51 +518,75 @@ router.post(
       
       let recordId = null;
       let analyzedAt = getTaiwanISO();
-      
+      let recordSaved = false;
+
       // 只有登入用戶才儲存到資料庫
       if (req.user && req.user.id) {
-        const { data: recordData, error: dbError } = await graphqlRequest(saveQuery, {
-          userId: req.user.id,
-          imageUrl,
-          overallScore: summary.overall_score,
-          skinAge: summary.skin_age,
-          hydrationScore: summary.scores?.hydration,
-          radianceScore: summary.scores?.radiance,
-          firmnessScore: summary.scores?.firmness,
-          textureScore: summary.scores?.texture,
-          wrinklesScore: summary.scores?.wrinkles,
-          poresScore: summary.scores?.pores,
-          pigmentationScore: summary.scores?.pigmentation,
-          fullAnalysisData: thumbnailData
-            ? { ...analysisResult.data, _thumbnail: thumbnailData }
-            : analysisResult.data,
-          recommendations: summary.recommendations,
-          skincareRoutine: skincareRoutine,
-          analysisHour: getTaiwanHour(),
-          createdAt: getTaiwanISO()
-        });
-        
-        if (recordData?.insert_skin_analysis_records_one) {
-          recordId = recordData.insert_skin_analysis_records_one.id;
-          analyzedAt = recordData.insert_skin_analysis_records_one.created_at;
-        }
+        try {
+          // 移除 face_maps（大型 base64 圖片），避免 JSONB 欄位過大導致 Hasura 拒絕或查詢緩慢
+          const analysisDataForDB = { ...analysisResult.data };
+          delete analysisDataForDB.face_maps;
 
-        // 扣除分析次數
-        if (req.quotaInfo && !req.quotaInfo.unlimited) {
-          const deductQuery = `
-            mutation DeductAnalysis($userId: uuid!) {
-              update_user_profiles(
-                where: { user_id: { _eq: $userId } }
-                _inc: { 
-                  total_analyses: 1
-                  remaining_analyses: -1
+          const { data: recordData } = await graphqlRequest(saveQuery, {
+            userId: req.user.id,
+            imageUrl,
+            overallScore: Math.round(summary.overall_score || 0),
+            skinAge: summary.skin_age ? Math.round(summary.skin_age) : null,
+            hydrationScore: summary.scores?.hydration ? Math.round(summary.scores.hydration) : null,
+            radianceScore: summary.scores?.radiance ? Math.round(summary.scores.radiance) : null,
+            firmnessScore: summary.scores?.firmness ? Math.round(summary.scores.firmness) : null,
+            textureScore: summary.scores?.texture ? Math.round(summary.scores.texture) : null,
+            wrinklesScore: summary.scores?.wrinkles ? Math.round(summary.scores.wrinkles) : null,
+            poresScore: summary.scores?.pores ? Math.round(summary.scores.pores) : null,
+            pigmentationScore: summary.scores?.pigmentation ? Math.round(summary.scores.pigmentation) : null,
+            // 六力分數（對應 SkinAnalysisReport 雷達圖）
+            scoreOil:         sixForceScores.oil,
+            scoreMoisture:    sixForceScores.moisture,
+            scorePigment:     sixForceScores.pigment,
+            scoreWrinkle:     sixForceScores.wrinkle,
+            scoreSensitivity: sixForceScores.sensitivity,
+            scoreAcne:        sixForceScores.acne,
+            fullAnalysisData: thumbnailData
+              ? { ...analysisDataForDB, _thumbnail: thumbnailData, face_maps: compressedFaceMaps }
+              : { ...analysisDataForDB, face_maps: compressedFaceMaps },
+            recommendations: summary.recommendations,
+            skincareRoutine: skincareRoutine,
+            analysisHour: getTaiwanHour(),
+            createdAt: getTaiwanISO()
+          });
+
+          if (recordData?.insert_skin_analysis_records_one) {
+            recordId = recordData.insert_skin_analysis_records_one.id;
+            analyzedAt = recordData.insert_skin_analysis_records_one.created_at;
+            recordSaved = true;
+            console.log(`✅ 分析記錄已儲存 | recordId: ${recordId}`);
+          } else {
+            console.error('⚠️ DB save returned null - record may not have been inserted (check Hasura permissions or constraints)');
+          }
+
+          // 扣除分析次數
+          if (req.quotaInfo && !req.quotaInfo.unlimited) {
+            const deductQuery = `
+              mutation DeductAnalysis($userId: uuid!) {
+                update_user_profiles(
+                  where: { user_id: { _eq: $userId } }
+                  _inc: { 
+                    total_analyses: 1
+                    remaining_analyses: -1
+                  }
+                ) {
+                  affected_rows
                 }
-              ) {
-                affected_rows
               }
-            }
-          `;
-          await graphqlRequest(deductQuery, { userId: req.user.id });
+            `;
+            await graphqlRequest(deductQuery, { userId: req.user.id });
+          }
+        } catch (saveError) {
+          // DB 儲存失敗不影響分析結果回傳，但要記錄錯誤供偵錯
+          console.error('❌ DB save failed (analysis result will still be returned to user):', saveError.message);
+          if (saveError.errors) {
+            console.error('   GraphQL errors:', JSON.stringify(saveError.errors));
+          }
         }
       } else {
         console.log('ℹ️  訪客模式 - 不儲存記錄到資料庫');
@@ -540,7 +632,8 @@ router.post(
             : { guest: true, message: '訪客模式，不計入配額' },
           imageUrl,
           analyzedAt: analyzedAt,
-          userMode: req.user ? 'member' : 'guest'
+          userMode: req.user ? 'member' : 'guest',
+          recordSaved: recordSaved
         }
       });
 
@@ -587,6 +680,12 @@ router.get('/history', authenticateToken, async (req, res) => {
           wrinkles_score
           pores_score
           pigmentation_score
+          score_oil
+          score_moisture
+          score_pigment
+          score_wrinkle
+          score_sensitivity
+          score_acne
           image_url
           feng_shui_element
           feng_shui_blessing
