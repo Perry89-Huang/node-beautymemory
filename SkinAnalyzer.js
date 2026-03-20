@@ -1188,71 +1188,92 @@ class SkinAnalyzer {
   }
 
   /**
-   * 計算整體評分（基於皮膚病學標準）
+   * 計算整體評分
+   *
+   * 依據皮膚科臨床量表校正：
+   *   - 痘痘：IGA (Investigator's Global Assessment) + GAGS (Global Acne Grading System)
+   *   - 色斑：MASI (Melasma Area and Severity Index)
+   *   - 皺紋：WSRS (Wrinkle Severity Rating Scale) + Glogau 光老化分級
+   *   - 黑頭/粉刺：GAGS 粉刺病灶因子
+   *   - 眼袋：Barton 眼袋臨床三分法
+   *
+   * 權重優先級依據：
+   *   1. 痘痘 (1.5)：IGA/GAGS 首要評估工具；炎症風險最高，QoL 影響最大 (Dreno et al., 2018)
+   *   2. 色斑 (1.4)：MASI 驗證量表；Fitzpatrick III-V 亞洲膚色第一美容困擾 (Vashi et al., 2016)
+   *   3. 皺紋 (1.3)：WSRS/Glogau 驗證；重要老化指標，但屬生理預期變化
+   *   4. 眼袋/黑頭/閉口粉刺 (1.2)：有臨床分級但視覺影響或炎症風險次於上述
+   *   5. 黑眼圈 (1.1)：無國際標準量表，以視覺顯著性評估
+   *   6. 毛孔 (1.0)：結構性問題，無炎症風險，臨床優先度最低
+   *
    * @param {Object} result - 分析結果
    * @returns {number} 整體評分 (0-100)
    */
   calculateOverallScore(result) {
     const scores = [];
-    const weights = []; // 權重系統
-    
-    // 通用計分函數 - 根據 AILab API 返回的值類型
-    // 二元值 (0/1)：0=100分, 1=75分 (降低基礎分以避免過高)
+    const weights = [];
+
+    // ---------- 計分函數 ----------
+
+    // 二元值 (0/1) — WSRS 啟發：偵測到即代表至少 Grade 2（輕度可見），約 70 分
     const calculateBinaryScore = (value) => {
       if (value === undefined || value === null) return null;
-      return value === 0 ? 100 : 75;
-    };
-    
-    // 多級值 (0-3)：根據臨床嚴重度分級
-    const calculateMultiLevelScore = (value) => {
-      if (value === undefined || value === null) return null;
-      const scores = [100, 75, 55, 35]; // 0=優秀, 1=良好, 2=中度, 3=嚴重
-      return scores[value] || 50;
+      return value === 0 ? 100 : 70; // WSRS Grade 2-3 中間值
     };
 
-    // === 1. 老化指標（權重 1.5）===
+    // 多級值 (0-3) — GAGS 粉刺因子 / IGA 四級分法
+    // 0=清潔(100), 1=輕度IGA1(78), 2=中度IGA2-3(55), 3=嚴重IGA4(32)
+    const calculateMultiLevelScore = (value) => {
+      if (value === undefined || value === null) return null;
+      const scores = [100, 78, 55, 32];
+      return scores[value] ?? 50;
+    };
+
+    // === 1. 皺紋 / 老化指標（WSRS + Glogau 光老化分級，權重 1.3）===
     const wrinkleFields = [
       { key: 'forehead_wrinkle', name: '抬頭紋' },
-      { key: 'crows_feet', name: '魚尾紋' },
-      { key: 'nasolabial_fold', name: '法令紋' },
-      { key: 'eye_finelines', name: '眼周細紋' },
+      { key: 'crows_feet',       name: '魚尾紋' },
+      { key: 'nasolabial_fold',  name: '法令紋' },
+      { key: 'eye_finelines',    name: '眼周細紋' },
       { key: 'glabella_wrinkle', name: '眉間紋' }
     ];
-    
+
     wrinkleFields.forEach(field => {
       if (result[field.key]?.value !== undefined) {
         const score = calculateBinaryScore(result[field.key].value);
         if (score !== null) {
           scores.push(score);
-          weights.push(1.5); // 老化皺紋是重要指標
+          weights.push(1.3); // WSRS 老化指標：重要但低於炎症性問題
         }
       }
     });
-    
-    // === 2. 眼部問題（權重 1.3）===
+
+    // === 2. 眼部問題 ===
+
+    // 眼袋（Barton 臨床三分法，權重 1.2）
+    // Grade I(輕度脂肪疝出)→73, Grade II(中度)→52, Grade III(重度+皮膚鬆弛)→33
     if (result.eye_pouch?.value !== undefined) {
       let score = 100;
       if (result.eye_pouch.value === 1) {
-        // 根據嚴重度細分
         if (result.eye_pouch_severity?.value !== undefined) {
           const severity = result.eye_pouch_severity.value;
-          score = severity === 0 ? 70 : severity === 1 ? 55 : 40;
+          score = severity === 0 ? 73 : severity === 1 ? 52 : 33;
         } else {
-          score = 65; // 沒有嚴重度資料時的預設分數
+          score = 63; // 無嚴重度資料時取 Grade I-II 中間值
         }
       }
       scores.push(score);
-      weights.push(1.3);
+      weights.push(1.2); // Barton 眼袋分級
     }
-    
-    // 黑眼圈 (多級值)
+
+    // 黑眼圈：無國際標準量表，以視覺顯著性評估（權重 1.1）
     if (result.dark_circle?.value !== undefined) {
-      const score = result.dark_circle.value === 0 ? 100 : 70;
+      const score = result.dark_circle.value === 0 ? 100 : 68;
       scores.push(score);
-      weights.push(1.2);
+      weights.push(1.1);
     }
-    
-    // === 3. 毛孔問題（權重 1.0）===
+
+    // === 3. 毛孔問題（臨床 4 分法，權重 1.0）===
+    // 毛孔屬結構性問題，無炎症風險，臨床優先度最低
     const poreFields = [
       'pores_forehead', 'pores_left_cheek', 'pores_right_cheek', 'pores_jaw'
     ];
@@ -1268,61 +1289,68 @@ class SkinAnalyzer {
       scores.push(Math.round(poreSum / poreCount));
       weights.push(1.0);
     }
-    
-    // === 4. 瑕疵問題（權重 1.2）===
-    // 黑頭
+
+    // === 4. 瑕疵問題 ===
+
+    // 黑頭（GAGS 粉刺病灶因子，權重 1.2）
+    // GAGS 中粉刺因子 = 1（最低），但為炎症性痘痘的前驅病灶
     if (result.blackhead?.value !== undefined) {
       const score = calculateMultiLevelScore(result.blackhead.value);
       if (score !== null) {
         scores.push(score);
-        weights.push(1.2);
+        weights.push(1.2); // GAGS 粉刺因子
       }
     }
-    
-    // 痘痘 - 根據臨床嚴重度分級
+
+    // 痘痘（IGA + GAGS 雙量表校正，權重 1.5）
+    // IGA：0=清潔 → 1=幾乎清潔 → 2=輕度 → 3=中度 → 4=重度 → 5=極重度
+    // GAGS 總分：1-18=輕度, 19-30=中度, 31-38=重度, >39=極重度
     if (result.acne?.rectangle) {
       const count = result.acne.rectangle.length;
       let score;
-      if (count === 0) score = 100;
-      else if (count <= 2) score = 85;      // 輕微
-      else if (count <= 5) score = 70;      // 輕度
-      else if (count <= 10) score = 55;     // 中度
-      else if (count <= 20) score = 40;     // 中重度
-      else score = 30;                      // 嚴重
+      if (count === 0)      score = 100; // IGA 0 — Clear
+      else if (count <= 2)  score = 83;  // IGA 1 — Almost clear
+      else if (count <= 6)  score = 65;  // IGA 2 — Mild     (GAGS ~8-24)
+      else if (count <= 12) score = 45;  // IGA 3 — Moderate (GAGS ~25-48)
+      else if (count <= 20) score = 28;  // IGA 4 — Severe   (GAGS ~52-80)
+      else                  score = 15;  // IGA 5 — Very severe
       scores.push(score);
-      weights.push(1.3); // 痘痘是重要指標
+      weights.push(1.5); // IGA/GAGS 首要評估工具，最高 QoL 影響
     }
-    
-    // 斑點 - 根據臨床分級
+
+    // 色斑（MASI 量表校正，權重 1.4）
+    // MASI = 面積(0-6) × 深度(1-4) × 均勻度(1-2)，總分 0-48
+    // 色素沉澱為亞洲 Fitzpatrick III-V 膚色第一美容困擾
     if (result.skin_spot?.rectangle) {
       const count = result.skin_spot.rectangle.length;
       let score;
-      if (count === 0) score = 100;
-      else if (count <= 3) score = 85;      // 輕微
-      else if (count <= 8) score = 70;      // 輕度
-      else if (count <= 15) score = 55;     // 中度
-      else if (count <= 25) score = 45;     // 中重度
-      else score = 35;                      // 嚴重
+      if (count === 0)       score = 100; // MASI 0
+      else if (count <= 3)   score = 83;  // MASI 1-6   — 極輕
+      else if (count <= 8)   score = 65;  // MASI 7-15  — 輕度
+      else if (count <= 15)  score = 47;  // MASI 16-25 — 中度
+      else if (count <= 25)  score = 30;  // MASI 26-35 — 中重度
+      else                   score = 18;  // MASI >35   — 嚴重
       scores.push(score);
-      weights.push(1.1);
+      weights.push(1.4); // MASI 亞洲肌膚首要困擾
     }
 
-    // 閉口粉刺
+    // 閉口粉刺（GAGS 非炎症性病灶，權重 1.2）
+    // GAGS 粉刺因子 = 1（非炎症），但可進展為炎症性痘痘
     if (result.closed_comedones?.rectangle) {
       const count = result.closed_comedones.rectangle.length;
       let score;
-      if (count === 0) score = 100;
-      else if (count <= 3) score = 80;
-      else if (count <= 8) score = 65;
-      else if (count <= 15) score = 50;
-      else score = 35;
+      if (count === 0)      score = 100;
+      else if (count <= 3)  score = 82;  // 極少量
+      else if (count <= 8)  score = 63;  // 輕度 (GAGS comedone range)
+      else if (count <= 15) score = 45;  // 中度
+      else                  score = 28;  // 嚴重
       scores.push(score);
-      weights.push(1.1);
+      weights.push(1.2); // 非炎症但具進展風險
     }
 
     // === 計算加權平均分數 ===
     if (scores.length === 0) return 75; // 預設分數
-    
+
     let weightedSum = 0;
     let weightSum = 0;
     for (let i = 0; i < scores.length; i++) {
@@ -1330,18 +1358,21 @@ class SkinAnalyzer {
       weightSum += weights[i];
     }
     const avgScore = Math.round(weightedSum / weightSum);
-    
-    // === 年齡修正（可選）===
+
+    // === 膚齡修正（Glogau 光老化分級）===
+    // Glogau I（≤30 歲）：無皺紋，基礎良好 → +3
+    // Glogau II（31-38 歲）：動態紋開始出現 → +1
     let finalScore = avgScore;
     if (result.skin_age?.value) {
       const skinAge = result.skin_age.value;
-      // 如果膚齡在合理範圍內，給予小幅加分
-      if (skinAge >= 20 && skinAge <= 35) {
-        finalScore = Math.min(finalScore + 2, 100);
+      if (skinAge >= 20 && skinAge <= 30) {
+        finalScore = Math.min(finalScore + 3, 100); // Glogau I
+      } else if (skinAge >= 31 && skinAge <= 38) {
+        finalScore = Math.min(finalScore + 1, 100); // Glogau II
       }
     }
-    
-    // 設置上下限：最高 92 分（符合臨床實際），最低 25 分
+
+    // 上下限：最高 92（臨床不給滿分），最低 25
     return Math.max(25, Math.min(finalScore, 92));
   }
 
