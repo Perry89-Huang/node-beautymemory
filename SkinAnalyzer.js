@@ -201,9 +201,16 @@ class SkinAnalyzer {
         contentType: 'image/jpeg'
       });
       
-      // Request red area map for sensitivity visualization (進階版和Pro版)
+      // Request all face maps for visual analysis across all 6 tabs (進階版和Pro版)
       if (this.version === 'advanced' || this.version === 'pro') {
-        formData.append('return_maps', 'red_area');
+        formData.append('return_maps', [
+          'red_area',                  // 敏 - 泛紅熱力圖
+          'texture_enhanced_oily_area', // 油 - 油光分佈圖
+          'water_area',                // 水 - 水分缺水圖
+          'brown_area',                // 斑 - 深層色素UV圖
+          'texture_enhanced_lines',    // 皺 - 皺紋紋理增強圖
+          'roi_outline_map',           // 痘/斑 - 病灶定位圖
+        ].join(','));
       }
 
       const startTime = Date.now();
