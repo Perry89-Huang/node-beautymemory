@@ -144,19 +144,22 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
           }
         `;
 
-        await nhost.graphql.request(insertOrderMutation, {
-          order: {
-            user_id: userId,
-            plan_id: planId,
-            amount: plan.price,
-            currency: 'TWD',
-            transaction_id: response.data.info.transactionId,
-            line_pay_order_id: orderId,
-            status: 'pending',
-            plan_name: plan.name,
-            plan_duration: plan.durationDays,
-            analyses_count: plan.analyses,
-            payment_info: response.data
+        await nhost.graphql.request({
+          query: insertOrderMutation,
+          variables: {
+            order: {
+              user_id: userId,
+              plan_id: planId,
+              amount: plan.price,
+              currency: 'TWD',
+              transaction_id: response.data.info.transactionId,
+              line_pay_order_id: orderId,
+              status: 'pending',
+              plan_name: plan.name,
+              plan_duration: plan.durationDays,
+              analyses_count: plan.analyses,
+              payment_info: response.data
+            }
           }
         });
       } catch (dbError) {
@@ -220,7 +223,7 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
       }
     `;
 
-    const orderResult = await nhost.graphql.request(getOrderQuery, { orderId });
+    const orderResult = await nhost.graphql.request({ query: getOrderQuery, variables: { orderId } });
     
     if (!orderResult.data?.orders || orderResult.data.orders.length === 0) {
       return res.status(404).json({
@@ -295,12 +298,15 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
           }
         `;
 
-        await nhost.graphql.request(updateOrderMutation, {
-          orderId: order.id,
-          updates: {
-            status: 'completed',
-            paid_at: now,
-            payment_info: response.data
+        await nhost.graphql.request({
+          query: updateOrderMutation,
+          variables: {
+            orderId: order.id,
+            updates: {
+              status: 'completed',
+              paid_at: now,
+              payment_info: response.data
+            }
           }
         });
 
@@ -327,9 +333,12 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
           updated_at: now
         };
 
-        const memberResult = await nhost.graphql.request(updateMemberMutation, {
-          userId: userId,
-          updates: memberUpdates
+        const memberResult = await nhost.graphql.request({
+          query: updateMemberMutation,
+          variables: {
+            userId: userId,
+            updates: memberUpdates
+          }
         });
 
         console.log('會員升級成功:', memberResult.data);
