@@ -24,6 +24,7 @@ const PLANS = {
     name: '專業會員方案',
     price: 299,
     duration: '30 天',
+    durationDays: 30,
     analyses: 30,
     description: '30 天 30 次 AI 肌膚檢測',
     features: [
@@ -107,8 +108,8 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
         }
       ],
       redirectUrls: {
-        confirmUrl: `${process.env.FRONTEND_URL || 'http://localhost:2000'}/payment/confirm?orderId=${orderId}`,
-        cancelUrl: `${process.env.FRONTEND_URL || 'http://localhost:2000'}/payment/cancel`
+        confirmUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/confirm?orderId=${orderId}`,
+        cancelUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/cancel`
       }
     };
 
@@ -153,7 +154,7 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
             line_pay_order_id: orderId,
             status: 'pending',
             plan_name: plan.name,
-            plan_duration: parseInt(plan.duration),
+            plan_duration: plan.durationDays,
             analyses_count: plan.analyses,
             payment_info: response.data
           }
@@ -281,8 +282,7 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
       
       // 計算會員到期日
       const expiresAt = new Date();
-      const durationDays = parseInt(plan.duration);
-      expiresAt.setDate(expiresAt.getDate() + durationDays);
+      expiresAt.setDate(expiresAt.getDate() + plan.durationDays);
 
       try {
         // 1. 更新訂單狀態
