@@ -8,6 +8,26 @@ const crypto = require('crypto');
 const { authenticateToken } = require('../middleware/auth');
 const { nhost } = require('../config/nhost');
 
+// Helper: 使用 admin secret 執行 GraphQL（與 members.js 相同模式）
+async function graphqlRequest(query, variables = {}) {
+  const response = await axios.post(
+    nhost.graphql.url,
+    { query, variables },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-hasura-admin-secret': process.env.NHOST_ADMIN_SECRET
+      }
+    }
+  );
+  if (response.data.errors) {
+    const error = new Error(response.data.errors[0].message);
+    error.errors = response.data.errors;
+    throw error;
+  }
+  return { data: response.data.data, error: null };
+}
+
 // LINE Pay 配置
 const LINE_PAY_CHANNEL_ID = process.env.LINE_PAY_CHANNEL_ID;
 const LINE_PAY_CHANNEL_SECRET = process.env.LINE_PAY_CHANNEL_SECRET;
@@ -144,9 +164,7 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
           }
         `;
 
-        await nhost.graphql.request({
-          query: insertOrderMutation,
-          variables: {
+        await graphqlRequest(insertOrderMutation, {
             order: {
               user_id: userId,
               plan_id: planId,
@@ -160,8 +178,7 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
               analyses_count: plan.analyses,
               payment_info: response.data
             }
-          }
-        });
+          });
       } catch (dbError) {
         console.error('儲存訂單失敗:', dbError);
         // 即使資料庫儲存失敗，仍返回付款連結給用戶
@@ -223,7 +240,7 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
       }
     `;
 
-    const orderResult = await nhost.graphql.request({ query: getOrderQuery, variables: { orderId } });
+    const orderResult = await graphqlRequest(getOrderQuery, { orderId });
     
     if (!orderResult.data?.orders || orderResult.data.orders.length === 0) {
       return res.status(404).json({
@@ -298,26 +315,23 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
           }
         `;
 
-        await nhost.graphql.request({
-          query: updateOrderMutation,
-          variables: {
+        await graphqlRequest(updateOrderMutation, {
             orderId: order.id,
             updates: {
               status: 'completed',
               paid_at: now,
               payment_info: response.data
             }
-          }
-        });
+          });
 
-        // 2. 更新會員等級
+        // 2. 更新 user_profiles 會員等級
         const updateMemberMutation = `
-          mutation UpdateMember($userId: uuid!, $updates: members_set_input!) {
-            update_members(where: {user_id: {_eq: $userId}}, _set: $updates) {
+          mutation UpdateMember($userId: uuid!, $updates: user_profiles_set_input!) {
+            update_user_profiles(where: {user_id: {_eq: $userId}}, _set: $updates) {
               affected_rows
               returning {
-                level
-                expires_at
+                member_level
+                subscription_end
                 total_analyses
                 remaining_analyses
               }
@@ -326,19 +340,16 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
         `;
 
         const memberUpdates = {
-          level: order.plan_id,
-          expires_at: expiresAt.toISOString(),
+          member_level: order.plan_id,
+          subscription_end: expiresAt.toISOString(),
+          subscription_start: now,
           total_analyses: plan.analyses,
-          remaining_analyses: plan.analyses,
-          updated_at: now
+          remaining_analyses: plan.analyses
         };
 
-        const memberResult = await nhost.graphql.request({
-          query: updateMemberMutation,
-          variables: {
-            userId: userId,
-            updates: memberUpdates
-          }
+        const memberResult = await graphqlRequest(updateMemberMutation, {
+          userId: userId,
+          updates: memberUpdates
         });
 
         console.log('會員升級成功:', memberResult.data);
