@@ -733,6 +733,7 @@ router.get('/quota', authenticateToken, async (req, res) => {
           total_analyses
           subscription_type
           subscription_end
+          member_level
         }
       }
     `;
@@ -755,6 +756,7 @@ router.get('/quota', authenticateToken, async (req, res) => {
     res.json({
       success: true,
       data: {
+        memberLevel: profile.member_level || 'beginner',
         remaining: isUnlimited ? -1 : profile.remaining_analyses,
         total: profile.total_analyses,
         subscriptionType: profile.subscription_type,
