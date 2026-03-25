@@ -242,15 +242,100 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
 
     const orderResult = await graphqlRequest(getOrderQuery, { orderId });
     
+    // ── Recovery path ──────────────────────────────────────────────────────────
+    // Order not in DB (e.g. insert failed silently before the orders table existed).
+    // We still attempt the LINE Pay confirm so the user isn't stuck.
     if (!orderResult.data?.orders || orderResult.data.orders.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: 'ORDER_NOT_FOUND',
-          message: '找不到訂單'
-        }
+      console.warn(`[recovery] Order ${orderId} not found in DB – attempting LINE Pay confirm anyway`);
+
+      // Default to the only available plan; amount must match what LINE Pay holds.
+      const recoveryPlan = PLANS['intermediate'];
+      const recoveryBody = { amount: recoveryPlan.price, currency: 'TWD' };
+      const recoveryNonce = Date.now().toString();
+      const recoveryUri = `/v3/payments/${transactionId}/confirm`;
+      const recoverySig = generateSignature(LINE_PAY_CHANNEL_SECRET, recoveryUri, recoveryBody, recoveryNonce);
+
+      let linePayRes;
+      try {
+        linePayRes = await axios.post(`${LINE_PAY_API_URL}${recoveryUri}`, recoveryBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-LINE-ChannelId': LINE_PAY_CHANNEL_ID,
+            'X-LINE-Authorization-Nonce': recoveryNonce,
+            'X-LINE-Authorization': recoverySig
+          }
+        });
+      } catch (lineErr) {
+        console.error('[recovery] LINE Pay confirm error:', lineErr.response?.data || lineErr.message);
+        return res.status(404).json({
+          success: false,
+          error: { code: 'ORDER_NOT_FOUND', message: '找不到訂單，付款確認失敗，請聯繫客服' }
+        });
+      }
+
+      if (linePayRes.data.returnCode !== '0000') {
+        console.error('[recovery] LINE Pay returned error:', linePayRes.data);
+        return res.status(400).json({
+          success: false,
+          error: { code: 'PAYMENT_FAILED', message: `付款確認失敗: ${linePayRes.data.returnMessage}` }
+        });
+      }
+
+      // LINE Pay confirmed – create order + upgrade member
+      const now = new Date().toISOString();
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + recoveryPlan.durationDays);
+      const recoveryOrderId = orderId; // keep the original LINE Pay orderId
+
+      try {
+        const insertOrderMutation = `
+          mutation InsertOrder($order: orders_insert_input!) {
+            insert_orders_one(object: $order) { id }
+          }
+        `;
+        await graphqlRequest(insertOrderMutation, {
+          order: {
+            user_id: userId,
+            plan_id: 'intermediate',
+            amount: recoveryPlan.price,
+            currency: 'TWD',
+            transaction_id: transactionId,
+            line_pay_order_id: recoveryOrderId,
+            status: 'completed',
+            plan_name: recoveryPlan.name,
+            plan_duration: recoveryPlan.durationDays,
+            analyses_count: recoveryPlan.analyses,
+            paid_at: now,
+            payment_info: linePayRes.data
+          }
+        });
+        const updateMemberMutation = `
+          mutation UpdateMember($userId: uuid!, $updates: user_profiles_set_input!) {
+            update_user_profiles(where: {user_id: {_eq: $userId}}, _set: $updates) { affected_rows }
+          }
+        `;
+        await graphqlRequest(updateMemberMutation, {
+          userId,
+          updates: {
+            member_level: 'intermediate',
+            subscription_end: expiresAt.toISOString(),
+            subscription_start: now,
+            total_analyses: recoveryPlan.analyses,
+            remaining_analyses: recoveryPlan.analyses
+          }
+        });
+        console.log('[recovery] Order created and member upgraded for userId:', userId);
+      } catch (dbErr) {
+        console.error('[recovery] DB update failed:', dbErr.message);
+      }
+
+      return res.json({
+        success: true,
+        message: '付款成功！會員已升級',
+        data: { orderId, transactionId, level: 'intermediate', expiresAt: expiresAt.toISOString() }
       });
     }
+    // ── End recovery path ──────────────────────────────────────────────────────
 
     const order = orderResult.data.orders[0];
     
