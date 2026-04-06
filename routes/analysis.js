@@ -443,24 +443,17 @@ router.post(
         }
       }
 
-      // ── 計算六力分數（與 SkinAnalysisReport.tsx 的 sixForces 邏輯一致）──────
+      // ── 六力分數：直接使用 AILabTools Pro API 原始分數 ──────────────────
       const scoreInfo = analysisResult.data?.result?.score_info || {};
-      const rawAcneScore    = scoreInfo.acne_score            ?? 50;
-      const blackheadCnt    = analysisResult.data?.result?.blackhead_count ?? 0;
-      const comedoneCnt     = analysisResult.data?.result?.closed_comedones?.count ?? 0;
-      const acneMarkCnt     = analysisResult.data?.result?.acne_mark?.count ?? 0;
-      const blackheadPenalty = Math.min(25, Math.floor(blackheadCnt / 2));
-      const comedonePenalty  = Math.min(8,  comedoneCnt * 2);
-      const markPenalty      = Math.min(5,  acneMarkCnt);
-      const adjustedAcneScore = Math.max(0, rawAcneScore - blackheadPenalty - comedonePenalty - markPenalty);
-
+      console.log('🔢 scoreInfo:', JSON.stringify(scoreInfo));
+      console.log('🔢 total_score from API:', scoreInfo.total_score, '| summary.overall_score:', summary.overall_score);
       const sixForceScores = {
         oil:         Math.round(scoreInfo.oily_intensity_score ?? 50),
         moisture:    Math.round(scoreInfo.water_score          ?? 50),
         pigment:     Math.round(scoreInfo.melanin_score        ?? 50),
         wrinkle:     Math.round(scoreInfo.wrinkle_score        ?? 50),
         sensitivity: Math.round(scoreInfo.sensitivity_score    ?? 50),
-        acne:        Math.round(adjustedAcneScore),
+        acne:        Math.round(scoreInfo.acne_score           ?? 50),
       };
 
       // 儲存分析記錄
@@ -542,7 +535,7 @@ router.post(
           const { data: recordData } = await graphqlRequest(saveQuery, {
             userId: req.user.id,
             imageUrl,
-            overallScore: Math.round(summary.overall_score || 0),
+            overallScore: Math.round(scoreInfo.total_score || summary.overall_score || 0),
             skinAge: summary.skin_age ? Math.round(summary.skin_age) : null,
             hydrationScore: summary.scores?.hydration ? Math.round(summary.scores.hydration) : null,
             radianceScore: summary.scores?.radiance ? Math.round(summary.scores.radiance) : null,
@@ -604,13 +597,14 @@ router.post(
         console.log('ℹ️  訪客模式 - 不儲存記錄到資料庫');
       }
 
-      console.log(`✅ 分析完成 | 評分: ${summary.overall_score} | 用戶: ${userEmail}`);
-      
+      const finalOverallScore = Math.round(scoreInfo.total_score || summary.overall_score || 0);
+      console.log(`✅ 分析完成 | 評分: ${finalOverallScore} | 用戶: ${userEmail}`);
+
       // 記錄返回數據結構以便調試
       console.log('📤 返回數據結構:', {
         hasResult: !!analysisResult.data?.result,
         resultKeys: analysisResult.data?.result ? Object.keys(analysisResult.data.result).slice(0, 5) : [],
-        summaryScore: summary.overall_score,
+        summaryScore: finalOverallScore,
         summaryAge: summary.skin_age
       });
 
@@ -620,7 +614,7 @@ router.post(
         data: {
           recordId: recordId,
           summary: {
-            overall_score: summary.overall_score,
+            overall_score: finalOverallScore,
             skin_age: summary.skin_age,
             scores: summary.scores,
             key_concerns: summary.key_concerns,
@@ -629,7 +623,9 @@ router.post(
           analysis: {
             result: analysisResult.data.result || analysisResult.data,
             face_rectangle: analysisResult.data.face_rectangle,
-            face_maps: analysisResult.data.face_maps,
+            // AILab Pro API puts face_maps inside result, not at top level.
+            // Return the already-compressed maps (each value is a full data URL).
+            face_maps: compressedFaceMaps,
             sensitivity: analysisResult.data.sensitivity
           },
           raw_pro_api_response: analysisResult.raw_string || null,
