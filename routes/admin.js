@@ -27,23 +27,36 @@ async function graphqlRequest(query, variables = {}) {
   return response.data.data;
 }
 
-// 將 timestamp 陣列按日期分組計數 (台灣時間 UTC+8)
+// timestamp → 台灣時間日期字串 (YYYY-MM-DD)
+function toTWDate(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  const local = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return local.toISOString().slice(0, 10);
+}
+
+// 按日期分組計數
 function groupByDate(rows, field) {
   const counts = {};
   for (const row of rows) {
-    const ts = row[field];
-    if (!ts) continue;
-    const d = new Date(ts);
-    // 台灣時間 = UTC+8
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    const hour = d.getUTCHours() + 8;
-    // 如果加 8 小時後跨天
-    const local = new Date(Date.UTC(y, d.getUTCMonth(), d.getUTCDate(), hour));
-    const key = local.toISOString().slice(0, 10);
+    const key = toTWDate(row[field]);
+    if (!key) continue;
     counts[key] = (counts[key] || 0) + 1;
   }
+  return counts;
+}
+
+// 按日期計算不重複 user_id 數（活躍用戶）
+function groupUniqueUsersByDate(rows, dateField, userField) {
+  const sets = {};
+  for (const row of rows) {
+    const key = toTWDate(row[dateField]);
+    if (!key || !row[userField]) continue;
+    if (!sets[key]) sets[key] = new Set();
+    sets[key].add(row[userField]);
+  }
+  const counts = {};
+  for (const [key, s] of Object.entries(sets)) counts[key] = s.size;
   return counts;
 }
 
@@ -76,7 +89,7 @@ function errRes(res, code, message, detail) {
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
   const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-  const adminPassword = process.env.ADMIN_PASSWORD || 'beauty-admin-2024';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'qwerty';
 
   if (username !== adminUsername || password !== adminPassword) {
     return res.status(401).json({
@@ -178,17 +191,6 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
       }
     `;
 
-    const loginQuery = `
-      query AdminLogins($startDate: timestamp!) {
-        user_profiles(
-          where: { last_login: { _gte: $startDate } }
-          order_by: { last_login: asc }
-        ) {
-          last_login
-        }
-      }
-    `;
-
     const analysisQuery = `
       query AdminAnalyses($startDate: timestamp!) {
         skin_analysis_records(
@@ -196,27 +198,28 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
           order_by: { created_at: asc }
         ) {
           created_at
+          user_id
         }
       }
     `;
 
     const vars = { startDate: startISO };
-    const [regData, loginData, analysisData] = await Promise.all([
+    const [regData, analysisData] = await Promise.all([
       graphqlRequest(regQuery, vars),
-      graphqlRequest(loginQuery, vars),
       graphqlRequest(analysisQuery, vars)
     ]);
 
-    const regByDate      = groupByDate(regData.user_profiles,             'member_since');
-    const loginByDate    = groupByDate(loginData.user_profiles,            'last_login');
-    const analysisByDate = groupByDate(analysisData.skin_analysis_records, 'created_at');
+    const records = analysisData.skin_analysis_records;
+    const regByDate      = groupByDate(regData.user_profiles, 'member_since');
+    const analysisByDate = groupByDate(records,                'created_at');
+    const activeByDate   = groupUniqueUsersByDate(records,     'created_at', 'user_id');
 
     const dates = buildDateRange(days);
     const dailyStats = dates.map(date => ({
       date,
-      registrations: regByDate[date]      || 0,
-      logins:        loginByDate[date]     || 0,
-      analyses:      analysisByDate[date]  || 0
+      registrations: regByDate[date]    || 0,
+      analyses:      analysisByDate[date] || 0,
+      activeUsers:   activeByDate[date]   || 0
     }));
 
     res.json({
@@ -226,8 +229,8 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
         dailyStats,
         totals: {
           registrations: regData.user_profiles.length,
-          logins:        loginData.user_profiles.length,
-          analyses:      analysisData.skin_analysis_records.length
+          analyses:      records.length,
+          activeUsers:   new Set(records.map(r => r.user_id)).size
         }
       }
     });
