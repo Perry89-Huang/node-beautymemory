@@ -243,7 +243,9 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
 router.get('/recent-users', authenticateAdmin, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const query = `
+
+    // Step 1: 取 user_profiles
+    const profileQuery = `
       query AdminRecentUsers($limit: Int!) {
         user_profiles(
           order_by: { member_since: desc }
@@ -259,8 +261,34 @@ router.get('/recent-users', authenticateAdmin, async (req, res) => {
         }
       }
     `;
-    const data = await graphqlRequest(query, { limit });
-    res.json({ success: true, data: { users: data.user_profiles } });
+    const profileData = await graphqlRequest(profileQuery, { limit });
+    const profiles = profileData.user_profiles;
+
+    // Step 2: 取 auth.users 的 displayName / email
+    const userIds = profiles.map(p => p.user_id);
+    let userMap = {};
+    if (userIds.length > 0) {
+      const userQuery = `
+        query AdminUserNames($ids: [uuid!]!) {
+          users(where: { id: { _in: $ids } }) {
+            id
+            displayName
+            email
+          }
+        }
+      `;
+      const userData = await graphqlRequest(userQuery, { ids: userIds });
+      userData.users.forEach(u => { userMap[u.id] = u; });
+    }
+
+    // Step 3: 合併
+    const users = profiles.map(p => ({
+      ...p,
+      displayName: userMap[p.user_id]?.displayName || null,
+      email:       userMap[p.user_id]?.email       || null
+    }));
+
+    res.json({ success: true, data: { users } });
   } catch (error) {
     console.error('Admin recent-users error:', error.message);
     return errRes(res, 'SERVER_ERROR', '取得用戶列表失敗', error.message);
