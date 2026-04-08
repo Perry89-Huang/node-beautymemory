@@ -445,8 +445,6 @@ router.post(
 
       // ── 六力分數：直接使用 AILabTools Pro API 原始分數 ──────────────────
       const scoreInfo = analysisResult.data?.result?.score_info || {};
-      console.log('🔢 scoreInfo:', JSON.stringify(scoreInfo));
-      console.log('🔢 total_score from API:', scoreInfo.total_score, '| summary.overall_score:', summary.overall_score);
       const sixForceScores = {
         oil:         Math.round(scoreInfo.oily_intensity_score ?? 50),
         moisture:    Math.round(scoreInfo.water_score          ?? 50),
