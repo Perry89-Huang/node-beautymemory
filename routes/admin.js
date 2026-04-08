@@ -168,7 +168,7 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
 
     // 分三個獨立查詢，避免複雜度
     const regQuery = `
-      query AdminRegistrations($startDate: timestamptz!) {
+      query AdminRegistrations($startDate: timestamp!) {
         user_profiles(
           where: { member_since: { _gte: $startDate } }
           order_by: { member_since: asc }
@@ -179,7 +179,7 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
     `;
 
     const loginQuery = `
-      query AdminLogins($startDate: timestamptz!) {
+      query AdminLogins($startDate: timestamp!) {
         user_profiles(
           where: { last_login: { _gte: $startDate } }
           order_by: { last_login: asc }
@@ -190,7 +190,7 @@ router.get('/daily-stats', authenticateAdmin, async (req, res) => {
     `;
 
     const analysisQuery = `
-      query AdminAnalyses($startDate: timestamptz!) {
+      query AdminAnalyses($startDate: timestamp!) {
         skin_analysis_records(
           where: { created_at: { _gte: $startDate } }
           order_by: { created_at: asc }
