@@ -22,6 +22,7 @@ const membersRouter = require('./routes/members');
 const analysisRouter = require('./routes/analysis');
 const paymentRouter = require('./routes/payment');
 const adminRouter = require('./routes/admin');
+const benchmarksRouter = require('./routes/benchmarks');
 const { getTaiwanISO, formatTaiwanTime } = require('./utils/timezone');
 // AI 客服系統
 const anthropic = new Anthropic({
@@ -247,6 +248,7 @@ app.use('/api/members', membersRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/payment', paymentRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/benchmarks', benchmarksRouter);
 
 // ========================================
 // AI 推薦系統 API
