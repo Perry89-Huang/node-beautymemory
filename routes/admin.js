@@ -382,20 +382,14 @@ router.delete('/users/:userId', authenticateAdmin, async (req, res) => {
       }
     `, { userId });
 
-    // Step 3: 透過 nhost auth admin API 刪除 auth.users
-    const NHOST_SUBDOMAIN = process.env.NHOST_SUBDOMAIN;
-    const NHOST_REGION    = process.env.NHOST_REGION || 'ap-southeast-1';
-    const authAdminUrl    = `https://${NHOST_SUBDOMAIN}.auth.${NHOST_REGION}.nhost.run/v1/admin/users/${userId}`;
-
-    const authRes = await axios.delete(authAdminUrl, {
-      headers: {
-        'x-hasura-admin-secret': process.env.NHOST_ADMIN_SECRET
+    // Step 3: 透過 GraphQL 刪除 auth.users（含 CASCADE auth 子表）
+    await graphqlRequest(`
+      mutation DeleteAuthUser($userId: uuid!) {
+        delete_users_by_pk(id: $userId) {
+          id
+        }
       }
-    });
-
-    if (authRes.status >= 400) {
-      throw new Error(`Auth 刪除失敗: HTTP ${authRes.status}`);
-    }
+    `, { userId });
 
     console.log(`[admin] 已刪除用戶 ${userId}`);
     res.json({ success: true, data: { deletedUserId: userId } });
