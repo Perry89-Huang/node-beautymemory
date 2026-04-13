@@ -38,7 +38,7 @@ async function graphqlRequest(query, variables = {}) {
 // ========================================
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, displayName, phone } = req.body;
+    const { email, password, displayName, phone, birthDate, gender } = req.body;
 
     // 驗證必填欄位
     if (!email || !password) {
@@ -86,19 +86,31 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // user_profile 會由觸發器自動建立,這裡可以選擇性更新手機號碼
-    if (phone) {
+    // user_profile 會由觸發器自動建立，更新 phone / birthDate / gender
+    if (phone || birthDate || gender) {
+      const ALLOWED_GENDERS = ['female', 'male', 'other'];
+      const safeGender = ALLOWED_GENDERS.includes(gender) ? gender : null;
       const query = `
-        mutation UpdateUserProfile($userId: uuid!, $phone: String) {
+        mutation UpdateUserProfileOnRegister(
+          $userId: uuid!
+          $phone: String
+          $birthDate: date
+          $gender: String
+        ) {
           update_user_profiles(
             where: { user_id: { _eq: $userId } }
-            _set: { phone: $phone }
+            _set: { phone: $phone, birth_date: $birthDate, gender: $gender }
           ) {
             affected_rows
           }
         }
       `;
-      await graphqlRequest(query, { userId: session.user.id, phone });
+      await graphqlRequest(query, {
+        userId: session.user.id,
+        phone:     phone     || null,
+        birthDate: birthDate || null,
+        gender:    safeGender
+      });
     }
 
     // 查詢完整資料

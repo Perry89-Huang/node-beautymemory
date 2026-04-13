@@ -349,4 +349,61 @@ router.get('/analysis-stats', authenticateAdmin, async (req, res) => {
   }
 });
 
+// ========================================
+// DELETE /api/admin/users/:userId — 刪除用戶
+// ========================================
+router.delete('/users/:userId', authenticateAdmin, async (req, res) => {
+  const { userId } = req.params;
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!UUID_REGEX.test(userId)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_USER_ID', message: '無效的用戶 ID' }
+    });
+  }
+
+  try {
+    // Step 1: 刪除分析記錄
+    await graphqlRequest(`
+      mutation DeleteUserAnalyses($userId: uuid!) {
+        delete_skin_analysis_records(where: { user_id: { _eq: $userId } }) {
+          affected_rows
+        }
+      }
+    `, { userId });
+
+    // Step 2: 刪除 user_profiles
+    await graphqlRequest(`
+      mutation DeleteUserProfile($userId: uuid!) {
+        delete_user_profiles(where: { user_id: { _eq: $userId } }) {
+          affected_rows
+        }
+      }
+    `, { userId });
+
+    // Step 3: 透過 nhost auth admin API 刪除 auth.users
+    const NHOST_SUBDOMAIN = process.env.NHOST_SUBDOMAIN;
+    const NHOST_REGION    = process.env.NHOST_REGION || 'ap-southeast-1';
+    const authAdminUrl    = `https://${NHOST_SUBDOMAIN}.auth.${NHOST_REGION}.nhost.run/v1/admin/users/${userId}`;
+
+    const authRes = await axios.delete(authAdminUrl, {
+      headers: {
+        'x-hasura-admin-secret': process.env.NHOST_ADMIN_SECRET
+      }
+    });
+
+    if (authRes.status >= 400) {
+      throw new Error(`Auth 刪除失敗: HTTP ${authRes.status}`);
+    }
+
+    console.log(`[admin] 已刪除用戶 ${userId}`);
+    res.json({ success: true, data: { deletedUserId: userId } });
+
+  } catch (error) {
+    console.error('Admin delete-user error:', error.message);
+    return errRes(res, 'SERVER_ERROR', '刪除用戶失敗', error.message);
+  }
+});
+
 module.exports = router;
