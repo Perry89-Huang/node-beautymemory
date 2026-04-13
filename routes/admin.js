@@ -382,13 +382,18 @@ router.delete('/users/:userId', authenticateAdmin, async (req, res) => {
       }
     `, { userId });
 
-    // Step 3: 透過 nhost auth admin REST API 刪除 auth.users
+    // Step 3: 透過 Hasura run_sql 直接刪除 auth.users（GraphQL 未 expose mutations）
     const NHOST_SUBDOMAIN = process.env.NHOST_SUBDOMAIN;
     const NHOST_REGION    = process.env.NHOST_REGION || 'ap-southeast-1';
-    const authAdminUrl    = `https://${NHOST_SUBDOMAIN}.auth.${NHOST_REGION}.nhost.run/v1/admin/users/${userId}`;
+    const hasuraRunSqlUrl = `https://${NHOST_SUBDOMAIN}.hasura.${NHOST_REGION}.nhost.run/v2/query`;
 
-    console.log('[admin] 刪除 auth 用戶 URL:', authAdminUrl);
-    await axios.delete(authAdminUrl, {
+    await axios.post(hasuraRunSqlUrl, {
+      type: 'run_sql',
+      args: {
+        source: 'default',
+        sql: `DELETE FROM auth.users WHERE id = '${userId}'`
+      }
+    }, {
       headers: { 'x-hasura-admin-secret': process.env.NHOST_ADMIN_SECRET }
     });
 
