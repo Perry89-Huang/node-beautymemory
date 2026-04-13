@@ -207,7 +207,7 @@ router.post('/auth/refresh', async (req, res) => {
     const sessionData = tokenResponse.data;
     const userId = sessionData.user.id;
 
-    // 查詢用戶完整資料
+    // 查詢用戶完整資料（含 metadata 用於判斷是否正式註冊）
     const query = `
       query GetUserInfo($userId: uuid!) {
         user(id: $userId) {
@@ -215,6 +215,7 @@ router.post('/auth/refresh', async (req, res) => {
           email
           displayName
           avatarUrl
+          metadata
         }
         user_profiles(where: { user_id: { _eq: $userId } }) {
           member_level
@@ -223,9 +224,9 @@ router.post('/auth/refresh', async (req, res) => {
         }
       }
     `;
-    
+
     const { data: userData } = await graphqlRequest(query, { userId: userId });
-    
+
     if (!userData || !userData.user) {
       return res.status(404).json({
         success: false,
@@ -238,6 +239,19 @@ router.post('/auth/refresh', async (req, res) => {
 
     const user = userData.user;
     const profile = userData.user_profiles?.[0];
+
+    // 檢查是否透過正式註冊流程（有 registrationSource 標記）
+    const registrationSource = user.metadata?.registrationSource;
+    if (!registrationSource || registrationSource !== 'beautymemory_web') {
+      console.log(`[auth/refresh] 用戶 ${userId} 未經正式註冊（metadata: ${JSON.stringify(user.metadata)}），拒絕登入`);
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'NOT_REGISTERED',
+          message: '您尚未在美魔力完成會員註冊，請先使用 Email 註冊帳號'
+        }
+      });
+    }
 
     // 更新最後登入時間
     try {
