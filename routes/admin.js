@@ -382,11 +382,11 @@ router.delete('/users/:userId', authenticateAdmin, async (req, res) => {
       }
     `, { userId });
 
-    // Step 3: 透過 GraphQL 刪除 auth.users（含 CASCADE auth 子表）
+    // Step 3: 透過 GraphQL 刪除 auth.users
     await graphqlRequest(`
       mutation DeleteAuthUser($userId: uuid!) {
-        delete_users_by_pk(id: $userId) {
-          id
+        delete_users(where: { id: { _eq: $userId } }) {
+          affected_rows
         }
       }
     `, { userId });
