@@ -221,6 +221,8 @@ router.post('/auth/refresh', async (req, res) => {
           member_level
           remaining_analyses
           total_analyses
+          birth_date
+          gender
         }
       }
     `;
@@ -294,6 +296,7 @@ router.post('/auth/refresh', async (req, res) => {
       message: 'Token 刷新成功',
       data: {
         accessToken: sessionData.accessToken,
+        needsProfileCompletion: !profile?.birth_date,
         user: {
           id: user.id,
           email: user.email,
