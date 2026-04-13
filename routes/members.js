@@ -172,7 +172,7 @@ router.post('/register', async (req, res) => {
 // ========================================
 router.post('/auth/refresh', async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const { refreshToken, intent } = req.body;
 
     if (!refreshToken) {
       return res.status(400).json({
@@ -242,15 +242,34 @@ router.post('/auth/refresh', async (req, res) => {
 
     // 檢查是否透過正式註冊流程（有 registrationSource 標記）
     const registrationSource = user.metadata?.registrationSource;
-    if (!registrationSource || registrationSource !== 'beautymemory_web') {
-      console.log(`[auth/refresh] 用戶 ${userId} 未經正式註冊（metadata: ${JSON.stringify(user.metadata)}），拒絕登入`);
-      return res.status(403).json({
-        success: false,
-        error: {
-          code: 'NOT_REGISTERED',
-          message: '您尚未在美魔力完成會員註冊，請先使用 Email 註冊帳號'
+    const isRegistered = registrationSource === 'beautymemory_web';
+
+    if (!isRegistered) {
+      if (intent === 'register') {
+        // Google 帳號首次註冊 — 補上 registrationSource 標記
+        const newMetadata = { ...(user.metadata || {}), registrationSource: 'beautymemory_web' };
+        try {
+          await graphqlRequest(`
+            mutation UpdateUserMetadata($userId: uuid!, $metadata: jsonb!) {
+              updateUser(pk_columns: { id: $userId }, _set: { metadata: $metadata }) {
+                id
+              }
+            }
+          `, { userId, metadata: newMetadata });
+        } catch (e) {
+          console.warn('[auth/refresh] 更新 metadata 失敗:', e.message);
         }
-      });
+      } else {
+        // 登入意圖但無正式註冊紀錄 — 拒絕
+        console.log(`[auth/refresh] 用戶 ${userId} 未經正式註冊，拒絕登入`);
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'NOT_REGISTERED',
+            message: '您尚未在美魔力完成會員註冊，請先使用 Email 註冊帳號'
+          }
+        });
+      }
     }
 
     // 更新最後登入時間
