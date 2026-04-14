@@ -87,14 +87,15 @@ function rankLabel(topPct) {
   return { label: '有進步空間', level: 'needs_improvement' };
 }
 
-function buildSummary(overallMetric, groupLabel) {
+function buildSummary(overallMetric, groupLabel, gender) {
   const { topPercent } = overallMetric;
   const beaten = 100 - topPercent;
+  const you = gender === 'female' ? '妳' : '您';
   if (topPercent <= 25)
-    return `在${groupLabel}中，妳的整體膚況名列前茅（前 ${topPercent}%），超越了 ${beaten}% 的同齡人！`;
+    return `在${groupLabel}中，${you}的整體膚況名列前茅（前 ${topPercent}%），超越了 ${beaten}% 的同齡人！`;
   if (topPercent <= 50)
-    return `在${groupLabel}中，妳的整體膚況高於平均水準（前 ${topPercent}%），繼續保持！`;
-  return `在${groupLabel}中，妳的整體膚況排名前 ${topPercent}%，持續保養可以提升排名。`;
+    return `在${groupLabel}中，${you}的整體膚況高於平均水準（前 ${topPercent}%），繼續保持！`;
+  return `在${groupLabel}中，${you}的整體膚況排名前 ${topPercent}%，持續保養可以提升排名。`;
 }
 
 // ─── 計算同齡群組統計（純 JS，從 GraphQL 拿到的 records 陣列）──────────────
@@ -259,6 +260,7 @@ router.get('/peer-comparison', authenticateToken, async (req, res) => {
 
     // 1. 取用戶 profile + 最新分析
     const { profile, record } = await fetchUserInfo(userId);
+    console.log(`[benchmarks] userId=${userId} profile=${JSON.stringify(profile)} record=${JSON.stringify(record)}`);
 
     if (!profile) {
       return res.status(404).json({
@@ -322,8 +324,11 @@ router.get('/peer-comparison', authenticateToken, async (req, res) => {
         return res.json({
           success: true,
           data: {
+            hasAnalysis:      true,
+            hasBirthDate:     true,
             insufficientData: true,
             message: '同齡比較資料蒐集中，敬請期待 ✨',
+            userGender:       safeGender,
             userScores
           }
         });
@@ -346,7 +351,7 @@ router.get('/peer-comparison', authenticateToken, async (req, res) => {
         metrics,
         summary: {
           ...metrics.overall,
-          description: buildSummary(metrics.overall, groupLabel)
+          description: buildSummary(metrics.overall, groupLabel, safeGender)
         },
         dataNote: '基於近 30 天分析記錄，每位用戶取最新一筆'
       }
