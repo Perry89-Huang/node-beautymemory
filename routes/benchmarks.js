@@ -47,11 +47,6 @@ const METRIC_LABELS = {
 
 // ─── 輔助函式 ─────────────────────────────────────────────────────────────────
 
-// 出生年份 → 年齡
-function birthYearToAge(year) {
-  return new Date().getFullYear() - year;
-}
-
 // 年齡分組 → 出生年份範圍
 // 例：age_group_start = 35  →  born between (currentYear-39) and (currentYear-35)
 function ageGroupToBirthYearRange(ageGroupStart) {
@@ -217,7 +212,7 @@ async function fetchPeerRecords(minBirthDate, maxBirthDate, safeGender) {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const recordData = await graphqlRequest(`
-    query GetPeerScores($userIds: [uuid!]!, $since: timestamptz!) {
+    query GetPeerScores($userIds: [uuid!]!, $since: timestamp!) {
       skin_analysis_records(
         where: {
           user_id: { _in: $userIds }
