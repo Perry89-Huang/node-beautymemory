@@ -1,10 +1,11 @@
 // routes/payment.js
-// LINE Pay 付款處理
+// 付款處理：LINE Pay + 藍新金流 MPG
 
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const crypto = require('crypto');
+const querystring = require('querystring');
 const { authenticateToken } = require('../middleware/auth');
 const { nhost } = require('../config/nhost');
 
@@ -468,6 +469,274 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
         message: '付款確認失敗: ' + (error.response?.data?.returnMessage || error.message)
       }
     });
+  }
+});
+
+// ========================================
+// 藍新金流 MPG 整合
+// ========================================
+
+const NEWEBPAY_MERCHANT_ID = process.env.NEWEBPAY_MERCHANT_ID;
+const NEWEBPAY_HASH_KEY = process.env.NEWEBPAY_HASH_KEY;
+const NEWEBPAY_HASH_IV = process.env.NEWEBPAY_HASH_IV;
+const NEWEBPAY_ENV = process.env.NEWEBPAY_ENV || 'test';
+
+const NEWEBPAY_GATEWAY_URL = NEWEBPAY_ENV === 'production'
+  ? 'https://core.newebpay.com/MPG/mpg_gateway'
+  : 'https://ccore.newebpay.com/MPG/mpg_gateway';
+
+// AES-256-CBC 加密（等同 PHP bin2hex(openssl_encrypt(...))）
+function newebpayAesEncrypt(data) {
+  const cipher = crypto.createCipheriv(
+    'aes-256-cbc',
+    Buffer.from(NEWEBPAY_HASH_KEY, 'utf8'),
+    Buffer.from(NEWEBPAY_HASH_IV, 'utf8')
+  );
+  let encrypted = cipher.update(data, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return encrypted;
+}
+
+// AES-256-CBC 解密
+function newebpayAesDecrypt(data) {
+  const decipher = crypto.createDecipheriv(
+    'aes-256-cbc',
+    Buffer.from(NEWEBPAY_HASH_KEY, 'utf8'),
+    Buffer.from(NEWEBPAY_HASH_IV, 'utf8')
+  );
+  let decrypted = decipher.update(data, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+// SHA-256 雜湊產生 TradeSha
+function generateNewebpayTradeSha(tradeInfoHex) {
+  const str = `HashKey=${NEWEBPAY_HASH_KEY}&${tradeInfoHex}&HashIV=${NEWEBPAY_HASH_IV}`;
+  return crypto.createHash('sha256').update(str).digest('hex').toUpperCase();
+}
+
+// 從解密後的 query string 取得 JSON 結果
+function parseTradeInfo(tradeInfoHex) {
+  const decrypted = newebpayAesDecrypt(tradeInfoHex);
+  // TradeInfo 可能是 JSON 格式（RespondType=JSON）
+  try {
+    return JSON.parse(decrypted);
+  } catch {
+    return querystring.parse(decrypted);
+  }
+}
+
+// 將 orders 的 member 升級
+async function upgradeMemberAfterPayment(userId, planId, tradeNo) {
+  const plan = PLANS[planId] || PLANS['intermediate'];
+  const now = new Date().toISOString();
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + plan.durationDays);
+
+  const updateMemberMutation = `
+    mutation UpdateMember($userId: uuid!, $updates: user_profiles_set_input!) {
+      update_user_profiles(where: {user_id: {_eq: $userId}}, _set: $updates) {
+        affected_rows
+      }
+    }
+  `;
+  await graphqlRequest(updateMemberMutation, {
+    userId,
+    updates: {
+      member_level: planId,
+      subscription_end: expiresAt.toISOString(),
+      subscription_start: now,
+      total_analyses: plan.analyses,
+      remaining_analyses: plan.analyses
+    }
+  });
+  return expiresAt;
+}
+
+// ──────────────────────────────────────
+// POST /api/payment/newebpay/request
+// 產生藍新金流 MPG 表單資料，由前端 POST 至藍新閘道
+// ──────────────────────────────────────
+router.post('/newebpay/request', authenticateToken, async (req, res) => {
+  try {
+    const { planId } = req.body;
+    const userId = req.user.id;
+
+    if (!planId || !PLANS[planId]) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PLAN', message: '無效的方案' } });
+    }
+    if (!NEWEBPAY_MERCHANT_ID || !NEWEBPAY_HASH_KEY || !NEWEBPAY_HASH_IV) {
+      return res.status(500).json({ success: false, error: { code: 'CONFIG_ERROR', message: '藍新金流設定未完成' } });
+    }
+
+    const plan = PLANS[planId];
+    const merchantOrderNo = `BM${Date.now()}`;
+    const timeStamp = Math.floor(Date.now() / 1000).toString();
+    const backendUrl = process.env.BACKEND_URL || 'https://beautymemory-6a58c48154f4.herokuapp.com';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://beautymemory.life';
+
+    // TradeInfo 參數
+    const tradeInfoParams = {
+      MerchantID: NEWEBPAY_MERCHANT_ID,
+      RespondType: 'JSON',
+      TimeStamp: timeStamp,
+      Version: '2.3',
+      MerchantOrderNo: merchantOrderNo,
+      Amt: plan.price,
+      ItemDesc: plan.name,
+      NotifyURL: `${backendUrl}/api/payment/newebpay/notify`,
+      ReturnURL: `${backendUrl}/api/payment/newebpay/return`,
+      Email: req.user.email || '',
+      CREDIT: 1,
+      LoginType: 0
+    };
+
+    const tradeInfoStr = querystring.stringify(tradeInfoParams);
+    const tradeInfoHex = newebpayAesEncrypt(tradeInfoStr);
+    const tradeSha = generateNewebpayTradeSha(tradeInfoHex);
+
+    // 儲存訂單到資料庫
+    try {
+      const insertOrderMutation = `
+        mutation InsertOrder($order: orders_insert_input!) {
+          insert_orders_one(object: $order) { id }
+        }
+      `;
+      await graphqlRequest(insertOrderMutation, {
+        order: {
+          user_id: userId,
+          plan_id: planId,
+          amount: plan.price,
+          currency: 'TWD',
+          line_pay_order_id: merchantOrderNo,
+          status: 'pending',
+          plan_name: plan.name,
+          plan_duration: plan.durationDays,
+          analyses_count: plan.analyses,
+          payment_info: { gateway: 'newebpay', merchantOrderNo, timeStamp }
+        }
+      });
+    } catch (dbError) {
+      console.error('[newebpay] 儲存訂單失敗:', dbError.message);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        gatewayUrl: NEWEBPAY_GATEWAY_URL,
+        formData: {
+          MerchantID: NEWEBPAY_MERCHANT_ID,
+          TradeInfo: tradeInfoHex,
+          TradeSha: tradeSha,
+          Version: '2.3'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[newebpay] 請求錯誤:', error.message);
+    res.status(500).json({ success: false, error: { code: 'REQUEST_FAILED', message: '付款請求失敗: ' + error.message } });
+  }
+});
+
+// ──────────────────────────────────────
+// POST /api/payment/newebpay/notify
+// 藍新金流後端通知（server-to-server），更新訂單與會員等級
+// ──────────────────────────────────────
+router.post('/newebpay/notify', async (req, res) => {
+  try {
+    const { Status, MerchantID, TradeInfo, TradeSha } = req.body;
+
+    // 驗證 TradeSha
+    const expectedSha = generateNewebpayTradeSha(TradeInfo);
+    if (expectedSha !== TradeSha) {
+      console.error('[newebpay notify] TradeSha 驗證失敗');
+      return res.send('0|TradeSha verify failed');
+    }
+
+    if (Status !== 'SUCCESS') {
+      console.warn('[newebpay notify] 付款未成功 Status:', Status);
+      return res.send('1|OK');
+    }
+
+    // 解密 TradeInfo
+    const tradeData = parseTradeInfo(TradeInfo);
+    const merchantOrderNo = tradeData.MerchantOrderNo || tradeData.Result?.MerchantOrderNo;
+    const tradeNo = tradeData.TradeNo || tradeData.Result?.TradeNo;
+
+    if (!merchantOrderNo) {
+      console.error('[newebpay notify] 無法取得 MerchantOrderNo');
+      return res.send('0|Missing MerchantOrderNo');
+    }
+
+    // 查詢訂單
+    const getOrderQuery = `
+      query GetOrder($orderNo: String!) {
+        orders(where: {line_pay_order_id: {_eq: $orderNo}}, limit: 1) {
+          id user_id plan_id amount status
+        }
+      }
+    `;
+    const orderResult = await graphqlRequest(getOrderQuery, { orderNo: merchantOrderNo });
+    const order = orderResult.data?.orders?.[0];
+
+    if (!order) {
+      console.error('[newebpay notify] 找不到訂單:', merchantOrderNo);
+      return res.send('0|Order not found');
+    }
+
+    if (order.status === 'completed') {
+      return res.send('1|OK'); // 已處理過
+    }
+
+    // 更新訂單狀態
+    const now = new Date().toISOString();
+    const updateOrderMutation = `
+      mutation UpdateOrder($id: uuid!, $updates: orders_set_input!) {
+        update_orders_by_pk(pk_columns: {id: $id}, _set: $updates) { id }
+      }
+    `;
+    await graphqlRequest(updateOrderMutation, {
+      id: order.id,
+      updates: { status: 'completed', paid_at: now, transaction_id: tradeNo, payment_info: tradeData }
+    });
+
+    // 升級會員
+    await upgradeMemberAfterPayment(order.user_id, order.plan_id, tradeNo);
+    console.log('[newebpay notify] 付款成功，會員升級 userId:', order.user_id);
+
+    res.send('1|OK');
+  } catch (error) {
+    console.error('[newebpay notify] 錯誤:', error.message);
+    res.send('0|' + error.message);
+  }
+});
+
+// ──────────────────────────────────────
+// POST /api/payment/newebpay/return
+// 藍新金流前端瀏覽器返回，解析狀態並重導向前端
+// ──────────────────────────────────────
+router.post('/newebpay/return', async (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'https://beautymemory.life';
+  try {
+    const { Status, TradeInfo, TradeSha } = req.body;
+
+    if (Status !== 'SUCCESS') {
+      return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('付款未完成')}`);
+    }
+
+    // 驗證並解密
+    const expectedSha = generateNewebpayTradeSha(TradeInfo);
+    if (expectedSha !== TradeSha) {
+      return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('驗證失敗')}`);
+    }
+
+    const tradeData = parseTradeInfo(TradeInfo);
+    const merchantOrderNo = tradeData.MerchantOrderNo || tradeData.Result?.MerchantOrderNo;
+
+    res.redirect(`${frontendUrl}/payment/result?status=success&orderNo=${encodeURIComponent(merchantOrderNo || '')}`);
+  } catch (error) {
+    console.error('[newebpay return] 錯誤:', error.message);
+    res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('系統錯誤')}`);
   }
 });
 
