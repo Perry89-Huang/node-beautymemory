@@ -61,16 +61,21 @@ app.use(helmet({
 }));
 
 // CORS - 詳細設定以支援 preflight 請求
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:2000',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5000',
-  'http://10.14.210.249:3000', // 區域網路訪問
-  'https://beautymemory.life',
-  'https://www.beautymemory.life'
+const allowedOrigins = [
+  ...(process.env.ALLOWED_ORIGINS?.split(',') || [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:2000',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5000',
+    'http://10.14.210.249:3000', // 區域網路訪問
+    'https://beautymemory.life',
+    'https://www.beautymemory.life'
+  ]),
+  // 藍新金流付款回調 origin（瀏覽器從藍新頁面 POST 回後端）
+  'https://core.newebpay.com',
+  'https://ccore.newebpay.com',
 ];
 
 app.use(cors({
