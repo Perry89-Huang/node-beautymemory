@@ -569,6 +569,18 @@ router.post('/newebpay/request', authenticateToken, async (req, res) => {
       return res.status(500).json({ success: false, error: { code: 'CONFIG_ERROR', message: '藍新金流設定未完成' } });
     }
 
+    // 從資料庫取得用戶真實 email（JWT 中的 email 有時會是 UUID）
+    let userEmail = req.user.email || '';
+    if (!userEmail || userEmail.indexOf('@') === -1) {
+      try {
+        const emailResult = await graphqlRequest(
+          `query GetUserEmail($id: uuid!) { users(where: {id: {_eq: $id}}) { email } }`,
+          { id: userId }
+        );
+        userEmail = emailResult.data?.users?.[0]?.email || '';
+      } catch (_) { /* 取不到 email 就用空字串，讓藍新自行處理 */ }
+    }
+
     const plan = PLANS[planId];
     const merchantOrderNo = `BM${Date.now()}`;
     const timeStamp = Math.floor(Date.now() / 1000).toString();
@@ -586,7 +598,7 @@ router.post('/newebpay/request', authenticateToken, async (req, res) => {
       ItemDesc: plan.name,
       NotifyURL: `${backendUrl}/api/payment/newebpay/notify`,
       ReturnURL: `${backendUrl}/api/payment/newebpay/return`,
-      Email: req.user.email || '',
+      Email: userEmail,
       CREDIT: 1,
       LoginType: 0
     };
