@@ -994,6 +994,18 @@ router.get('/trend', authenticateToken, async (req, res) => {
   try {
     const { range = '30d' } = req.query;
 
+    // 取得訂閱類型
+    const profileQuery = `
+      query GetUserSubscription($userId: uuid!) {
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          subscription_type
+        }
+      }
+    `;
+    const { data: profileData } = await graphqlRequest(profileQuery, { userId: req.user.id });
+    const subscriptionType = profileData?.user_profiles?.[0]?.subscription_type || 'free';
+    const isPaid = subscriptionType !== 'free';
+
     // 計算日期範圍
     let intervalClause = '';
     if (range === '7d')  intervalClause = '7 days';
@@ -1042,15 +1054,15 @@ router.get('/trend', authenticateToken, async (req, res) => {
       return res.json({
         success: true,
         data: {
-          summary: { total_records: 0 },
+          summary: { total_records: 0, locked: false },
           timeline: [],
           milestones: []
         }
       });
     }
 
-    // 建立趨勢時間線
-    const timeline = records.map(r => ({
+    // 建立趨勢時間線（免費用戶只回傳最後 2 筆）
+    const allTimeline = records.map(r => ({
       id: r.id,
       date: r.created_at.slice(0, 10),
       datetime: r.created_at,
@@ -1066,7 +1078,11 @@ router.get('/trend', authenticateToken, async (req, res) => {
       }
     }));
 
-    // 計算 summary
+    const FREE_LIMIT = 2;
+    const locked = !isPaid && records.length > FREE_LIMIT;
+    const timeline = locked ? allTimeline.slice(-FREE_LIMIT) : allTimeline;
+
+    // 計算 summary（用全部記錄計算統計，鎖定用戶顯示 locked）
     const first = records[0];
     const last  = records[records.length - 1];
     const overallChange = last.overall_score - first.overall_score;
@@ -1085,7 +1101,9 @@ router.get('/trend', authenticateToken, async (req, res) => {
           first_date: first.created_at.slice(0, 10),
           latest_date: last.created_at.slice(0, 10),
           overall_change: overallChange,
-          streak_weeks: streakWeeks
+          streak_weeks: streakWeeks,
+          locked,
+          locked_count: locked ? records.length - FREE_LIMIT : 0,
         },
         timeline,
         milestones
@@ -1097,6 +1115,133 @@ router.get('/trend', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: { code: 'SERVER_ERROR', message: '趨勢查詢失敗' }
+    });
+  }
+});
+
+// ========================================
+// 月度肌膚報告
+// ========================================
+router.get('/monthly-report', authenticateToken, async (req, res) => {
+  try {
+    // 取得訂閱類型
+    const profileQuery = `
+      query GetUserSubscription($userId: uuid!) {
+        user_profiles(where: { user_id: { _eq: $userId } }) {
+          subscription_type
+        }
+      }
+    `;
+    const { data: profileData } = await graphqlRequest(profileQuery, { userId: req.user.id });
+    const subscriptionType = profileData?.user_profiles?.[0]?.subscription_type || 'free';
+    const isPaid = subscriptionType !== 'free';
+
+    // 解析 month 參數（預設當月）
+    const monthParam = req.query.month; // YYYY-MM
+    const now = new Date();
+    const year  = monthParam ? parseInt(monthParam.split('-')[0]) : now.getFullYear();
+    const month = monthParam ? parseInt(monthParam.split('-')[1]) : now.getMonth() + 1;
+
+    const startDate = new Date(year, month - 1, 1).toISOString();
+    const endDate   = new Date(year, month, 1).toISOString();
+
+    const reportQuery = `
+      query GetMonthlyRecords($userId: uuid!, $start: timestamp!, $end: timestamp!) {
+        skin_analysis_records(
+          where: {
+            user_id: { _eq: $userId }
+            created_at: { _gte: $start, _lt: $end }
+          }
+          order_by: { created_at: asc }
+        ) {
+          id
+          overall_score
+          score_oil
+          score_moisture
+          score_pigment
+          score_wrinkle
+          score_sensitivity
+          score_acne
+          created_at
+        }
+      }
+    `;
+
+    const { data, error } = await graphqlRequest(reportQuery, {
+      userId: req.user.id,
+      start: startDate,
+      end: endDate,
+    });
+    if (error) throw error;
+
+    const records = data.skin_analysis_records || [];
+    const monthLabel = `${year}年${month}月`;
+
+    if (records.length === 0) {
+      return res.json({
+        success: true,
+        data: { month: monthLabel, total_records: 0, locked: false, isPaid }
+      });
+    }
+
+    const first = records[0];
+    const last  = records[records.length - 1];
+    const dims  = ['score_oil','score_moisture','score_pigment','score_wrinkle','score_sensitivity','score_acne'];
+    const dimKeys = { score_oil:'oil', score_moisture:'moisture', score_pigment:'pigment', score_wrinkle:'wrinkle', score_sensitivity:'sensitivity', score_acne:'acne' };
+    const dimLabels = { oil:'控油力', moisture:'保濕力', pigment:'淨白力', wrinkle:'抗老力', sensitivity:'修護力', acne:'抗痘力' };
+
+    // 各維度平均、最高、最低
+    const dimStats = {};
+    dims.forEach(dim => {
+      const vals = records.map(r => r[dim]).filter(v => v != null);
+      if (!vals.length) return;
+      const key = dimKeys[dim];
+      dimStats[key] = {
+        label: dimLabels[key],
+        avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+        max: Math.max(...vals),
+        min: Math.min(...vals),
+        change: last[dim] != null && first[dim] != null ? last[dim] - first[dim] : null,
+      };
+    });
+
+    // 最佳/最差維度（按平均分）
+    const sorted = Object.entries(dimStats).sort((a, b) => b[1].avg - a[1].avg);
+    const bestDim  = sorted[0]?.[0];
+    const worstDim = sorted[sorted.length - 1]?.[0];
+
+    const teaser = {
+      month: monthLabel,
+      total_records: records.length,
+      avg_overall: Math.round(records.reduce((s, r) => s + (r.overall_score || 0), 0) / records.length),
+      overall_change: last.overall_score - first.overall_score,
+      best_dim: bestDim ? dimLabels[bestDim] : null,
+      locked: !isPaid,
+      isPaid,
+    };
+
+    if (!isPaid) {
+      return res.json({ success: true, data: teaser });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...teaser,
+        dim_stats: dimStats,
+        worst_dim: worstDim ? dimLabels[worstDim] : null,
+        timeline: records.map(r => ({
+          date: r.created_at.slice(0, 10),
+          overall_score: r.overall_score,
+        })),
+      }
+    });
+
+  } catch (error) {
+    console.error('月報查詢錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: '月報查詢失敗' }
     });
   }
 });
@@ -1137,8 +1282,10 @@ function calcStreakWeeks(timestamps) {
 
 function buildMilestones(records, streakWeeks) {
   const milestones = [];
-  if (streakWeeks >= 4) {
-    milestones.push({ type: 'streak', value: streakWeeks, label: `連續 ${streakWeeks} 週定期檢測` });
+  if (streakWeeks >= 8) {
+    milestones.push({ type: 'streak', tier: 'gold', value: streakWeeks, label: `連續 ${streakWeeks} 週定期檢測` });
+  } else if (streakWeeks >= 4) {
+    milestones.push({ type: 'streak', tier: 'silver', value: streakWeeks, label: `連續 ${streakWeeks} 週定期檢測` });
   }
 
   const dims = ['score_oil','score_moisture','score_pigment','score_wrinkle','score_sensitivity','score_acne'];
