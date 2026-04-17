@@ -851,13 +851,13 @@ router.get('/compare', authenticateToken, async (req, res) => {
     if (idList.length !== 2) return res.status(400).json({ success: false, error: { code: 'INVALID_IDS', message: '需要恰好 2 個 id' } });
 
     const query = `
-      query GetCompareRecords($userId: uuid!, $id1: uuid!, $id2: uuid!) {
-        r1: skin_analysis_records_by_pk(id: $id1) {
+      query GetCompareRecords($id1: uuid!, $id2: uuid!) {
+        r1: skin_analysis_records(where: { id: { _eq: $id1 } }, limit: 1) {
           id user_id created_at overall_score skin_age
           score_oil score_moisture score_pigment score_wrinkle score_sensitivity score_acne
           full_analysis_data
         }
-        r2: skin_analysis_records_by_pk(id: $id2) {
+        r2: skin_analysis_records(where: { id: { _eq: $id2 } }, limit: 1) {
           id user_id created_at overall_score skin_age
           score_oil score_moisture score_pigment score_wrinkle score_sensitivity score_acne
           full_analysis_data
@@ -865,12 +865,13 @@ router.get('/compare', authenticateToken, async (req, res) => {
       }
     `;
     const { data, error } = await graphqlRequest(query, {
-      userId: req.user.id, id1: idList[0], id2: idList[1]
+      id1: idList[0], id2: idList[1]
     });
     if (error) throw error;
 
-    const r1 = data?.r1;
-    const r2 = data?.r2;
+    // r1/r2 are arrays (from `where` query), take first element
+    const r1 = data?.r1?.[0];
+    const r2 = data?.r2?.[0];
     if (!r1 || !r2) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '找不到指定記錄' } });
     if (r1.user_id !== req.user.id || r2.user_id !== req.user.id) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '無權查看' } });
