@@ -402,7 +402,12 @@ router.post(
       }
 
       // 接收前端縮圖（base64 data URL），存入 full_analysis_data
-      const thumbnailData = req.body?.thumbnail || null;
+      const thumbnailData  = req.body?.thumbnail || null;
+      // 接收拍照時的原始畫布尺寸，用於 CompareView 臉部對齊
+      const captureSizeRaw = req.body?.capture_size || null;
+      const captureSize    = captureSizeRaw
+        ? (typeof captureSizeRaw === 'string' ? JSON.parse(captureSizeRaw) : captureSizeRaw)
+        : null;
 
       // ── 用 sharp 壓縮 face_maps，直接存入 DB（無需 Storage 容量）─────────────
       // 每張壓縮至 400px 寬、JPEG Q55，約 15-40 KB / 張（原始約 100-400 KB）
@@ -549,9 +554,12 @@ router.post(
             scoreWrinkle:     sixForceScores.wrinkle,
             scoreSensitivity: sixForceScores.sensitivity,
             scoreAcne:        sixForceScores.acne,
-            fullAnalysisData: thumbnailData
-              ? { ...analysisDataForDB, _thumbnail: thumbnailData, face_maps: compressedFaceMaps }
-              : { ...analysisDataForDB, face_maps: compressedFaceMaps },
+            fullAnalysisData: {
+              ...analysisDataForDB,
+              face_maps: compressedFaceMaps,
+              ...(thumbnailData  ? { _thumbnail: thumbnailData }   : {}),
+              ...(captureSize    ? { _capture_size: captureSize }  : {}),
+            },
             recommendations: summary.recommendations,
             skincareRoutine: skincareRoutine,
             analysisHour: getTaiwanHour(),
@@ -828,6 +836,90 @@ router.get('/history/:recordId', authenticateToken, async (req, res) => {
         message: '查詢失敗'
       }
     });
+  }
+});
+
+// ========================================
+// 兩筆記錄對比分析
+// ========================================
+router.get('/compare', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.query; // "uuid1,uuid2"
+    if (!ids) return res.status(400).json({ success: false, error: { code: 'MISSING_IDS', message: '缺少 ids 參數' } });
+
+    const idList = ids.split(',').map(s => s.trim()).filter(Boolean);
+    if (idList.length !== 2) return res.status(400).json({ success: false, error: { code: 'INVALID_IDS', message: '需要恰好 2 個 id' } });
+
+    const query = `
+      query GetCompareRecords($userId: uuid!, $id1: uuid!, $id2: uuid!) {
+        r1: skin_analysis_records_by_pk(id: $id1) {
+          id user_id created_at overall_score skin_age
+          score_oil score_moisture score_pigment score_wrinkle score_sensitivity score_acne
+          full_analysis_data
+        }
+        r2: skin_analysis_records_by_pk(id: $id2) {
+          id user_id created_at overall_score skin_age
+          score_oil score_moisture score_pigment score_wrinkle score_sensitivity score_acne
+          full_analysis_data
+        }
+      }
+    `;
+    const { data, error } = await graphqlRequest(query, {
+      userId: req.user.id, id1: idList[0], id2: idList[1]
+    });
+    if (error) throw error;
+
+    const r1 = data?.r1;
+    const r2 = data?.r2;
+    if (!r1 || !r2) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '找不到指定記錄' } });
+    if (r1.user_id !== req.user.id || r2.user_id !== req.user.id) {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '無權查看' } });
+    }
+
+    // 確保 r1 = 較早, r2 = 較晚
+    const [older, newer] = new Date(r1.created_at) <= new Date(r2.created_at) ? [r1, r2] : [r2, r1];
+
+    const extractRecord = (r) => ({
+      id: r.id,
+      date: r.created_at.slice(0, 10),
+      datetime: r.created_at,
+      overall_score: r.overall_score,
+      skin_age: r.skin_age,
+      scores: {
+        oil: r.score_oil, moisture: r.score_moisture, pigment: r.score_pigment,
+        wrinkle: r.score_wrinkle, sensitivity: r.score_sensitivity, acne: r.score_acne
+      },
+      thumbnail:     r.full_analysis_data?._thumbnail     || null,
+      capture_size:  r.full_analysis_data?._capture_size  || null,
+      face_rectangle: r.full_analysis_data?.face_rectangle || null,
+    });
+
+    const before = extractRecord(older);
+    const after  = extractRecord(newer);
+
+    const delta = {
+      overall:     after.overall_score - before.overall_score,
+      oil:         (after.scores.oil         ?? 0) - (before.scores.oil         ?? 0),
+      moisture:    (after.scores.moisture    ?? 0) - (before.scores.moisture    ?? 0),
+      pigment:     (after.scores.pigment     ?? 0) - (before.scores.pigment     ?? 0),
+      wrinkle:     (after.scores.wrinkle     ?? 0) - (before.scores.wrinkle     ?? 0),
+      sensitivity: (after.scores.sensitivity ?? 0) - (before.scores.sensitivity ?? 0),
+      acne:        (after.scores.acne        ?? 0) - (before.scores.acne        ?? 0),
+    };
+
+    res.json({
+      success: true,
+      data: {
+        before,
+        after,
+        delta,
+        days_between: Math.round((new Date(after.datetime) - new Date(before.datetime)) / 86400000)
+      }
+    });
+
+  } catch (error) {
+    console.error('對比查詢錯誤:', error);
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: '對比查詢失敗' } });
   }
 });
 
