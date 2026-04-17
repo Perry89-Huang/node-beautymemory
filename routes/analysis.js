@@ -850,7 +850,7 @@ router.get('/trend', authenticateToken, async (req, res) => {
       : `{ user_id: { _eq: $userId } }`;
 
     const trendQuery = `
-      query GetSkinTrend($userId: uuid!, $since: timestamptz) {
+      query GetSkinTrend($userId: uuid!, $since: timestamp) {
         skin_analysis_records(
           where: ${whereClause}
           order_by: { created_at: asc }
