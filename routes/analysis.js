@@ -1070,17 +1070,21 @@ router.get('/trend', authenticateToken, async (req, res) => {
   try {
     const { range = '30d' } = req.query;
 
-    // 取得訂閱類型
+    // 取得訂閱類型與會員等級
     const profileQuery = `
       query GetUserSubscription($userId: uuid!) {
         user_profiles(where: { user_id: { _eq: $userId } }) {
           subscription_type
+          member_level
         }
       }
     `;
     const { data: profileData } = await graphqlRequest(profileQuery, { userId: req.user.id });
-    const subscriptionType = profileData?.user_profiles?.[0]?.subscription_type || 'free';
-    const isPaid = subscriptionType !== 'free';
+    const profile = profileData?.user_profiles?.[0];
+    const subscriptionType = profile?.subscription_type || 'free';
+    const memberLevel = profile?.member_level || 'beginner';
+    // 付費判斷：member_level 或 subscription_type 任一非免費即視為付費用戶
+    const isPaid = subscriptionType !== 'free' || (memberLevel !== 'beginner' && memberLevel !== 'free');
 
     // 計算日期範圍
     let intervalClause = '';
@@ -1093,12 +1097,7 @@ router.get('/trend', authenticateToken, async (req, res) => {
       ? `{ user_id: { _eq: $userId }, created_at: { _gte: $since } }`
       : `{ user_id: { _eq: $userId } }`;
 
-    const trendQuery = `
-      query GetSkinTrend($userId: uuid!, $since: timestamp) {
-        skin_analysis_records(
-          where: ${whereClause}
-          order_by: { created_at: asc }
-        ) {
+    const TREND_FIELDS_FULL = `
           id
           overall_score
           skin_age
@@ -1108,7 +1107,20 @@ router.get('/trend', authenticateToken, async (req, res) => {
           score_wrinkle
           score_sensitivity
           score_acne
-          created_at
+          created_at`;
+
+    const TREND_FIELDS_BASIC = `
+          id
+          overall_score
+          skin_age
+          created_at`;
+
+    const buildTrendQuery = (fields) => `
+      query GetSkinTrend($userId: uuid!, $since: timestamp) {
+        skin_analysis_records(
+          where: ${whereClause}
+          order_by: { created_at: asc }
+        ) {${fields}
         }
       }
     `;
@@ -1117,14 +1129,26 @@ router.get('/trend', authenticateToken, async (req, res) => {
       ? new Date(Date.now() - parseDays(range) * 86400000).toISOString()
       : undefined;
 
-    const { data, error } = await graphqlRequest(trendQuery, {
-      userId: req.user.id,
-      ...(since ? { since } : {})
-    });
+    const queryVars = { userId: req.user.id, ...(since ? { since } : {}) };
 
-    if (error) throw error;
-
-    const records = data.skin_analysis_records || [];
+    let records;
+    let hasSixForce = true;
+    try {
+      const { data, error } = await graphqlRequest(buildTrendQuery(TREND_FIELDS_FULL), queryVars);
+      if (error) throw error;
+      records = data.skin_analysis_records || [];
+    } catch (firstErr) {
+      const errMsg = firstErr.message || JSON.stringify(firstErr.errors || '');
+      if (errMsg.includes('score_oil') || errMsg.includes('score_moisture') || errMsg.includes('field') || errMsg.includes('column')) {
+        console.warn('⚠️ 六力欄位不存在於 Hasura，改用基礎欄位查詢:', errMsg.slice(0, 120));
+        hasSixForce = false;
+        const { data, error } = await graphqlRequest(buildTrendQuery(TREND_FIELDS_BASIC), queryVars);
+        if (error) throw error;
+        records = data.skin_analysis_records || [];
+      } else {
+        throw firstErr;
+      }
+    }
 
     if (records.length === 0) {
       return res.json({
@@ -1144,14 +1168,14 @@ router.get('/trend', authenticateToken, async (req, res) => {
       datetime: r.created_at,
       overall_score: r.overall_score,
       skin_age: r.skin_age,
-      scores: {
+      scores: hasSixForce ? {
         oil:         r.score_oil,
         moisture:    r.score_moisture,
         pigment:     r.score_pigment,
         wrinkle:     r.score_wrinkle,
         sensitivity: r.score_sensitivity,
         acne:        r.score_acne
-      }
+      } : {}
     }));
 
     const FREE_LIMIT = 2;
@@ -1200,17 +1224,20 @@ router.get('/trend', authenticateToken, async (req, res) => {
 // ========================================
 router.get('/monthly-report', authenticateToken, async (req, res) => {
   try {
-    // 取得訂閱類型
+    // 取得訂閱類型與會員等級
     const profileQuery = `
       query GetUserSubscription($userId: uuid!) {
         user_profiles(where: { user_id: { _eq: $userId } }) {
           subscription_type
+          member_level
         }
       }
     `;
     const { data: profileData } = await graphqlRequest(profileQuery, { userId: req.user.id });
-    const subscriptionType = profileData?.user_profiles?.[0]?.subscription_type || 'free';
-    const isPaid = subscriptionType !== 'free';
+    const profileRow = profileData?.user_profiles?.[0];
+    const subscriptionType = profileRow?.subscription_type || 'free';
+    const memberLevel = profileRow?.member_level || 'beginner';
+    const isPaid = subscriptionType !== 'free' || (memberLevel !== 'beginner' && memberLevel !== 'free');
 
     // 解析 month 參數（預設當月）
     const monthParam = req.query.month; // YYYY-MM
