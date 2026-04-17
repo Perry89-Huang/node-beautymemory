@@ -832,7 +832,182 @@ router.get('/history/:recordId', authenticateToken, async (req, res) => {
 });
 
 // ========================================
+// 肌膚趨勢分析
+// ========================================
+router.get('/trend', authenticateToken, async (req, res) => {
+  try {
+    const { range = '30d' } = req.query;
+
+    // 計算日期範圍
+    let intervalClause = '';
+    if (range === '7d')  intervalClause = '7 days';
+    else if (range === '30d') intervalClause = '30 days';
+    else if (range === '90d') intervalClause = '90 days';
+    // 'all' → 不過濾
+
+    const whereClause = intervalClause
+      ? `{ user_id: { _eq: $userId }, created_at: { _gte: $since } }`
+      : `{ user_id: { _eq: $userId } }`;
+
+    const trendQuery = `
+      query GetSkinTrend($userId: uuid!, $since: timestamptz) {
+        skin_analysis_records(
+          where: ${whereClause}
+          order_by: { created_at: asc }
+        ) {
+          id
+          overall_score
+          skin_age
+          score_oil
+          score_moisture
+          score_pigment
+          score_wrinkle
+          score_sensitivity
+          score_acne
+          created_at
+        }
+      }
+    `;
+
+    const since = intervalClause
+      ? new Date(Date.now() - parseDays(range) * 86400000).toISOString()
+      : undefined;
+
+    const { data, error } = await graphqlRequest(trendQuery, {
+      userId: req.user.id,
+      ...(since ? { since } : {})
+    });
+
+    if (error) throw error;
+
+    const records = data.skin_analysis_records || [];
+
+    if (records.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          summary: { total_records: 0 },
+          timeline: [],
+          milestones: []
+        }
+      });
+    }
+
+    // 建立趨勢時間線
+    const timeline = records.map(r => ({
+      id: r.id,
+      date: r.created_at.slice(0, 10),
+      datetime: r.created_at,
+      overall_score: r.overall_score,
+      skin_age: r.skin_age,
+      scores: {
+        oil:         r.score_oil,
+        moisture:    r.score_moisture,
+        pigment:     r.score_pigment,
+        wrinkle:     r.score_wrinkle,
+        sensitivity: r.score_sensitivity,
+        acne:        r.score_acne
+      }
+    }));
+
+    // 計算 summary
+    const first = records[0];
+    const last  = records[records.length - 1];
+    const overallChange = last.overall_score - first.overall_score;
+
+    // 連續檢測週數（每週至少一筆）
+    const streakWeeks = calcStreakWeeks(records.map(r => r.created_at));
+
+    // 里程碑
+    const milestones = buildMilestones(records, streakWeeks);
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          total_records: records.length,
+          first_date: first.created_at.slice(0, 10),
+          latest_date: last.created_at.slice(0, 10),
+          overall_change: overallChange,
+          streak_weeks: streakWeeks
+        },
+        timeline,
+        milestones
+      }
+    });
+
+  } catch (error) {
+    console.error('趨勢查詢錯誤:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: '趨勢查詢失敗' }
+    });
+  }
+});
+
+// ========================================
 // 輔助函數
 // ========================================
+
+function parseDays(range) {
+  if (range === '7d')  return 7;
+  if (range === '30d') return 30;
+  if (range === '90d') return 90;
+  return 365;
+}
+
+function calcStreakWeeks(timestamps) {
+  if (!timestamps.length) return 0;
+  // 取每週的 ISO week number，看連續幾週有記錄
+  const weeks = new Set(
+    timestamps.map(ts => {
+      const d = new Date(ts);
+      const jan1 = new Date(d.getFullYear(), 0, 1);
+      return `${d.getFullYear()}-W${Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7)}`;
+    })
+  );
+
+  const sorted = Array.from(weeks).sort().reverse();
+  let streak = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    const [yr1, w1] = sorted[i - 1].split('-W').map(Number);
+    const [yr2, w2] = sorted[i].split('-W').map(Number);
+    const diff = (yr1 - yr2) * 52 + (w1 - w2);
+    if (diff === 1) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function buildMilestones(records, streakWeeks) {
+  const milestones = [];
+  if (streakWeeks >= 4) {
+    milestones.push({ type: 'streak', value: streakWeeks, label: `連續 ${streakWeeks} 週定期檢測` });
+  }
+
+  const dims = ['score_oil','score_moisture','score_pigment','score_wrinkle','score_sensitivity','score_acne'];
+  const dimLabels = { score_oil:'控油力', score_moisture:'保濕力', score_pigment:'淨白力', score_wrinkle:'抗老力', score_sensitivity:'修護力', score_acne:'抗痘力' };
+
+  if (records.length >= 2) {
+    const first = records[0];
+    const last  = records[records.length - 1];
+
+    dims.forEach(dim => {
+      if (first[dim] != null && last[dim] != null) {
+        const change = last[dim] - first[dim];
+        if (change >= 10) {
+          milestones.push({ type: 'improvement', dimension: dim, change, label: `${dimLabels[dim]}提升 ${change} 分` });
+        }
+      }
+    });
+
+    const overallChange = last.overall_score - first.overall_score;
+    if (overallChange > 0) {
+      milestones.push({ type: 'overall', change: overallChange, label: `肌膚總分提升 ${overallChange} 分` });
+    }
+  }
+
+  return milestones;
+}
 
 module.exports = router;
