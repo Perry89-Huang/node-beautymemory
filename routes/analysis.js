@@ -550,7 +550,7 @@ router.post(
           const faceMapCount = Object.keys(compressedFaceMaps).length;
           console.log(`💾 準備存入 DB：compressedFaceMaps 有 ${faceMapCount} 張, result.face_maps 已清除`);
 
-          const { data: recordData } = await graphqlRequest(saveQuery, {
+          const commonVars = {
             userId: req.user.id,
             imageUrl,
             overallScore: Math.round(scoreInfo.total_score || summary.overall_score || 0),
@@ -562,7 +562,6 @@ router.post(
             wrinklesScore: summary.scores?.wrinkles ? Math.round(summary.scores.wrinkles) : null,
             poresScore: summary.scores?.pores ? Math.round(summary.scores.pores) : null,
             pigmentationScore: summary.scores?.pigmentation ? Math.round(summary.scores.pigmentation) : null,
-            // 六力分數（對應 SkinAnalysisReport 雷達圖）
             scoreOil:         sixForceScores.oil,
             scoreMoisture:    sixForceScores.moisture,
             scorePigment:     sixForceScores.pigment,
@@ -572,15 +571,93 @@ router.post(
             fullAnalysisData: {
               ...analysisDataForDB,
               face_maps: compressedFaceMaps,
-              ...(thumbnailData  ? { _thumbnail: thumbnailData }   : {}),
-              ...(captureSize    ? { _capture_size: captureSize }  : {}),
+              ...(thumbnailData ? { _thumbnail: thumbnailData } : {}),
+              ...(captureSize   ? { _capture_size: captureSize } : {}),
             },
             recommendations: summary.recommendations,
             skincareRoutine: skincareRoutine,
             analysisHour: getTaiwanHour(),
             createdAt: getTaiwanISO(),
             faceRectJson: faceRectJson,
-          });
+          };
+
+          // 嘗試含 face_rect_json 的完整 mutation；若 Hasura 未追蹤該欄位則改用不含該欄位的 fallback。
+          const tryInsert = async (includeFaceRect) => {
+            if (includeFaceRect) {
+              return graphqlRequest(saveQuery, commonVars);
+            }
+            // Fallback mutation：不含 face_rect_json
+            const saveQueryNoFaceRect = `
+              mutation SaveAnalysisRecord(
+                $userId: uuid!
+                $imageUrl: String
+                $overallScore: Int!
+                $skinAge: Int
+                $hydrationScore: Int
+                $radianceScore: Int
+                $firmnessScore: Int
+                $textureScore: Int
+                $wrinklesScore: Int
+                $poresScore: Int
+                $pigmentationScore: Int
+                $scoreOil: Int
+                $scoreMoisture: Int
+                $scorePigment: Int
+                $scoreWrinkle: Int
+                $scoreSensitivity: Int
+                $scoreAcne: Int
+                $fullAnalysisData: jsonb!
+                $recommendations: jsonb!
+                $skincareRoutine: jsonb!
+                $analysisHour: Int!
+                $createdAt: timestamp
+              ) {
+                insert_skin_analysis_records_one(object: {
+                  user_id: $userId
+                  image_url: $imageUrl
+                  overall_score: $overallScore
+                  skin_age: $skinAge
+                  hydration_score: $hydrationScore
+                  radiance_score: $radianceScore
+                  firmness_score: $firmnessScore
+                  texture_score: $textureScore
+                  wrinkles_score: $wrinklesScore
+                  pores_score: $poresScore
+                  pigmentation_score: $pigmentationScore
+                  score_oil: $scoreOil
+                  score_moisture: $scoreMoisture
+                  score_pigment: $scorePigment
+                  score_wrinkle: $scoreWrinkle
+                  score_sensitivity: $scoreSensitivity
+                  score_acne: $scoreAcne
+                  full_analysis_data: $fullAnalysisData
+                  recommendations: $recommendations
+                  skincare_routine: $skincareRoutine
+                  analysis_hour: $analysisHour
+                  created_at: $createdAt
+                }) {
+                  id
+                  created_at
+                }
+              }
+            `;
+            // eslint-disable-next-line no-unused-vars
+            const { faceRectJson: _drop, ...varsNoFaceRect } = commonVars;
+            return graphqlRequest(saveQueryNoFaceRect, varsNoFaceRect);
+          };
+
+          let recordData;
+          try {
+            ({ data: recordData } = await tryInsert(true));
+          } catch (firstErr) {
+            const errMsg = firstErr.message || JSON.stringify(firstErr.errors || '');
+            if (errMsg.includes('face_rect_json') || errMsg.includes('field') || errMsg.includes('column')) {
+              console.warn('⚠️ face_rect_json 欄位不存在於 Hasura，改用 fallback mutation（不含 face_rect_json）');
+              ({ data: recordData } = await tryInsert(false));
+            } else {
+              throw firstErr;
+            }
+          }
 
           if (recordData?.insert_skin_analysis_records_one) {
             recordId = recordData.insert_skin_analysis_records_one.id;
@@ -609,7 +686,6 @@ router.post(
             await graphqlRequest(deductQuery, { userId: req.user.id });
           }
         } catch (saveError) {
-          // DB 儲存失敗不影響分析結果回傳，但要記錄錯誤供偵錯
           console.error('❌ DB save failed (analysis result will still be returned to user):', saveError.message);
           if (saveError.errors) {
             console.error('   GraphQL errors:', JSON.stringify(saveError.errors));
