@@ -459,6 +459,19 @@ router.post(
         acne:        Math.round(scoreInfo.acne_score           ?? 50),
       };
 
+      // 組合 face_rect_json（臉部矩形 + 拍照尺寸，供 GuideOverlay 使用）
+      const rawFaceRect = analysisResult.data?.face_rectangle;
+      const faceRectJson = (rawFaceRect && captureSize)
+        ? {
+            left:           rawFaceRect.left,
+            top:            rawFaceRect.top,
+            width:          rawFaceRect.width,
+            height:         rawFaceRect.height,
+            capture_width:  captureSize.width,
+            capture_height: captureSize.height,
+          }
+        : null;
+
       // 儲存分析記錄
       const saveQuery = `
         mutation SaveAnalysisRecord(
@@ -484,6 +497,7 @@ router.post(
           $skincareRoutine: jsonb!
           $analysisHour: Int!
           $createdAt: timestamp
+          $faceRectJson: jsonb
         ) {
           insert_skin_analysis_records_one(object: {
             user_id: $userId
@@ -508,6 +522,7 @@ router.post(
             skincare_routine: $skincareRoutine
             analysis_hour: $analysisHour
             created_at: $createdAt
+            face_rect_json: $faceRectJson
           }) {
             id
             created_at
@@ -563,7 +578,8 @@ router.post(
             recommendations: summary.recommendations,
             skincareRoutine: skincareRoutine,
             analysisHour: getTaiwanHour(),
-            createdAt: getTaiwanISO()
+            createdAt: getTaiwanISO(),
+            faceRectJson: faceRectJson,
           });
 
           if (recordData?.insert_skin_analysis_records_one) {
@@ -836,6 +852,53 @@ router.get('/history/:recordId', authenticateToken, async (req, res) => {
         message: '查詢失敗'
       }
     });
+  }
+});
+
+// ========================================
+// 取得最近一次拍照的臉部引導資料（GuideOverlay 使用）
+// ========================================
+router.get('/latest-face-guide', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      query GetLatestFaceGuide($userId: uuid!) {
+        skin_analysis_records(
+          where: {
+            user_id: { _eq: $userId }
+            face_rect_json: { _is_null: false }
+          }
+          order_by: { created_at: desc }
+          limit: 1
+        ) {
+          id
+          created_at
+          overall_score
+          face_rect_json
+          full_analysis_data(path: "_thumbnail")
+        }
+      }
+    `;
+    const { data, error } = await graphqlRequest(query, { userId: req.user.id });
+    if (error) throw error;
+
+    const record = data?.skin_analysis_records?.[0];
+    if (!record) {
+      return res.json({ success: true, data: null });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id:            record.id,
+        date:          record.created_at.slice(0, 10),
+        overall_score: record.overall_score,
+        face_rect_json: record.face_rect_json,
+        thumbnail:     record.full_analysis_data || null,
+      }
+    });
+  } catch (error) {
+    console.error('取得臉部引導資料錯誤:', error);
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: '查詢失敗' } });
   }
 });
 

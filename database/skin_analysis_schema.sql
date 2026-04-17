@@ -127,7 +127,29 @@ BEGIN
     ALTER TABLE skin_analysis_records ADD COLUMN score_acne INT;
     RAISE NOTICE 'Added column: score_acne';
   END IF;
+
+  -- face_rect_json：臉部矩形 + 拍照尺寸，供 GuideOverlay 使用
+  -- { left, top, width, height, capture_width, capture_height }（均為像素絕對值）
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'skin_analysis_records' AND column_name = 'face_rect_json') THEN
+    ALTER TABLE skin_analysis_records ADD COLUMN face_rect_json JSONB;
+    RAISE NOTICE 'Added column: face_rect_json';
+  END IF;
 END $$;
+
+-- ── 回填 face_rect_json（從已存在的 full_analysis_data 補值）────────────
+UPDATE skin_analysis_records
+SET face_rect_json = jsonb_build_object(
+  'left',           (full_analysis_data -> 'face_rectangle' ->> 'left')::float,
+  'top',            (full_analysis_data -> 'face_rectangle' ->> 'top')::float,
+  'width',          (full_analysis_data -> 'face_rectangle' ->> 'width')::float,
+  'height',         (full_analysis_data -> 'face_rectangle' ->> 'height')::float,
+  'capture_width',  (full_analysis_data -> '_capture_size' ->> 'width')::float,
+  'capture_height', (full_analysis_data -> '_capture_size' ->> 'height')::float
+)
+WHERE face_rect_json IS NULL
+  AND full_analysis_data -> 'face_rectangle' IS NOT NULL
+  AND full_analysis_data -> '_capture_size'  IS NOT NULL;
 
 
 -- ========================================
