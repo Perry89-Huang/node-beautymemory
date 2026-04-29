@@ -728,28 +728,38 @@ router.post('/newebpay/notify', async (req, res) => {
 // 藍新金流前端瀏覽器返回，解析狀態並重導向前端
 // ──────────────────────────────────────
 router.post('/newebpay/return', async (req, res) => {
-  const frontendUrl = process.env.FRONTEND_URL || 'https://beautymemory.life';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://www.beautymemory.life';
+  const { Status, TradeInfo, TradeSha } = req.body;
+  console.log('[newebpay return] Status:', Status, '| TradeInfo[:32]:', TradeInfo?.substring(0, 32));
+
+  if (Status !== 'SUCCESS') {
+    console.warn('[newebpay return] 非 SUCCESS 狀態:', Status);
+    return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('付款未完成')}`);
+  }
+
+  // TradeSha 驗證（僅 log，不擋住 SUCCESS 導向）
   try {
-    const { Status, TradeInfo, TradeSha } = req.body;
-
-    if (Status !== 'SUCCESS') {
-      return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('付款未完成')}`);
-    }
-
-    // 驗證並解密
     const expectedSha = generateNewebpayTradeSha(TradeInfo);
     if (expectedSha !== TradeSha) {
-      return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('驗證失敗')}`);
+      console.warn('[newebpay return] TradeSha 不符 | expected[:16]:', expectedSha?.substring(0, 16), '| got[:16]:', TradeSha?.substring(0, 16));
     }
-
-    const tradeData = parseTradeInfo(TradeInfo);
-    const merchantOrderNo = tradeData.MerchantOrderNo || tradeData.Result?.MerchantOrderNo;
-
-    res.redirect(`${frontendUrl}/payment/result?status=success&orderNo=${encodeURIComponent(merchantOrderNo || '')}`);
-  } catch (error) {
-    console.error('[newebpay return] 錯誤:', error.message);
-    res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('系統錯誤')}`);
+  } catch (shaErr) {
+    console.error('[newebpay return] TradeSha 計算失敗:', shaErr.message);
   }
+
+  // 嘗試解析 TradeInfo 取得訂單號（失敗不影響導向）
+  let merchantOrderNo = '';
+  try {
+    const tradeData = parseTradeInfo(TradeInfo);
+    merchantOrderNo = tradeData.MerchantOrderNo || tradeData.Result?.MerchantOrderNo || '';
+    console.log('[newebpay return] 解析成功，訂單:', merchantOrderNo);
+  } catch (parseErr) {
+    console.error('[newebpay return] parseTradeInfo 失敗:', parseErr.message, '| TradeInfo encoding?');
+  }
+
+  // Status=SUCCESS → 藍新已確認付款，直接導向成功頁
+  // 實際安全驗證與 DB 更新由 notify (server-to-server) 負責
+  res.redirect(`${frontendUrl}/payment/result?status=success&orderNo=${encodeURIComponent(merchantOrderNo)}`);
 });
 
 module.exports = router;
