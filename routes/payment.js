@@ -599,8 +599,13 @@ router.post('/newebpay/request', authenticateToken, async (req, res) => {
       NotifyURL: `${backendUrl}/api/payment/newebpay/notify`,
       ReturnURL: `${backendUrl}/api/payment/newebpay/return`,
       Email: userEmail,
-      CREDIT: 1,
-      LoginType: 0
+      CREDIT: 1,        // 信用卡一次付清
+      APPLEPAY: 1,      // Apple Pay
+      ANDROIDPAY: 1,    // Google Pay
+      SAMSUNGPAY: 1,    // Samsung Pay
+      TAIWANPAY: 1,     // 台灣Pay
+      VACC: 1,          // ATM轉帳
+      CVS: 1,           // 超商代碼繳費
     };
 
     const tradeInfoStr = querystring.stringify(tradeInfoParams);
