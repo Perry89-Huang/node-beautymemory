@@ -598,6 +598,7 @@ router.post('/newebpay/request', authenticateToken, async (req, res) => {
       ItemDesc: plan.name,
       NotifyURL: `${backendUrl}/api/payment/newebpay/notify`,
       ReturnURL: `${backendUrl}/api/payment/newebpay/return`,
+      CustomerURL: `${backendUrl}/api/payment/newebpay/customer`,
       Email: userEmail,
       CREDIT: 1,        // 信用卡一次付清
       APPLEPAY: 1,      // Apple Pay
@@ -765,6 +766,48 @@ router.post('/newebpay/return', async (req, res) => {
   // Status=SUCCESS → 藍新已確認付款，直接導向成功頁
   // 實際安全驗證與 DB 更新由 notify (server-to-server) 負責
   res.redirect(`${frontendUrl}/payment/result?status=success&orderNo=${encodeURIComponent(merchantOrderNo)}`);
+});
+
+// ──────────────────────────────────────
+// POST /api/payment/newebpay/customer
+// 藍新非即時取號完成（超商代碼/ATM），解密後轉導前端顯示繳費資訊
+// ──────────────────────────────────────
+router.post('/newebpay/customer', async (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'https://www.beautymemory.life';
+  const { Status, TradeInfo } = req.body;
+
+  if (Status !== 'SUCCESS') {
+    return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('取號失敗，請重新嘗試')}`);
+  }
+
+  try {
+    const tradeData = parseTradeInfo(TradeInfo);
+    const result = tradeData.Result || tradeData;
+
+    const paymentType = result.PaymentType || '';
+    const orderNo    = result.MerchantOrderNo || '';
+    const codeNo     = result.CodeNo || '';          // 超商繳費代碼
+    const bankCode   = result.BankCode || '';        // ATM 銀行代碼
+    const expireDate = result.ExpireDate || '';
+    const expireTime = result.ExpireTime || '';
+    const amt        = result.Amt || '';
+
+    const params = new URLSearchParams({
+      status: 'pending',
+      paymentType,
+      orderNo,
+      amt,
+      expireDate,
+      expireTime,
+      ...(codeNo   && { codeNo }),
+      ...(bankCode && { bankCode }),
+    });
+
+    res.redirect(`${frontendUrl}/payment/result?${params.toString()}`);
+  } catch (err) {
+    console.error('[newebpay customer] 解析失敗:', err.message);
+    res.redirect(`${frontendUrl}/payment/result?status=pending&orderNo=&message=${encodeURIComponent('取號成功，請至超商繳費')}`);
+  }
 });
 
 module.exports = router;
