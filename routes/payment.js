@@ -774,23 +774,44 @@ router.post('/newebpay/return', async (req, res) => {
 // ──────────────────────────────────────
 router.post('/newebpay/customer', async (req, res) => {
   const frontendUrl = process.env.FRONTEND_URL || 'https://www.beautymemory.life';
-  const { Status, TradeInfo } = req.body;
 
-  if (Status !== 'SUCCESS') {
-    return res.redirect(`${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent('取號失敗，請重新嘗試')}`);
+  // 完整 log body，方便排查藍新回傳格式
+  console.log('[newebpay customer] body keys:', Object.keys(req.body));
+  console.log('[newebpay customer] Status:', JSON.stringify(req.body.Status));
+  console.log('[newebpay customer] TradeInfo prefix:', String(req.body.TradeInfo || '').substring(0, 32));
+
+  const rawStatus = String(req.body.Status || '').trim();
+  const TradeInfo = req.body.TradeInfo;
+
+  // 取號失敗 → 告知使用者並導回
+  if (rawStatus !== 'SUCCESS') {
+    console.warn('[newebpay customer] 取號失敗 Status:', rawStatus);
+    return res.redirect(
+      `${frontendUrl}/payment/result?status=fail&message=${encodeURIComponent(`取號失敗(${rawStatus})，請重新嘗試`)}`
+    );
+  }
+
+  // 取號成功但 TradeInfo 不存在 → 用最小資訊導回
+  if (!TradeInfo) {
+    console.warn('[newebpay customer] 缺少 TradeInfo');
+    return res.redirect(
+      `${frontendUrl}/payment/result?status=pending&paymentType=CVS&message=${encodeURIComponent('取號成功，請持代碼至超商繳費')}`
+    );
   }
 
   try {
     const tradeData = parseTradeInfo(TradeInfo);
     const result = tradeData.Result || tradeData;
 
-    const paymentType = result.PaymentType || '';
-    const orderNo    = result.MerchantOrderNo || '';
-    const codeNo     = result.CodeNo || '';          // 超商繳費代碼
-    const bankCode   = result.BankCode || '';        // ATM 銀行代碼
-    const expireDate = result.ExpireDate || '';
-    const expireTime = result.ExpireTime || '';
-    const amt        = result.Amt || '';
+    console.log('[newebpay customer] 解密成功 PaymentType:', result.PaymentType, 'CodeNo:', result.CodeNo);
+
+    const paymentType = result.PaymentType || 'CVS';
+    const orderNo     = result.MerchantOrderNo || '';
+    const codeNo      = result.CodeNo || '';
+    const bankCode    = result.BankCode || '';
+    const expireDate  = result.ExpireDate || '';
+    const expireTime  = result.ExpireTime || '';
+    const amt         = result.Amt || '';
 
     const params = new URLSearchParams({
       status: 'pending',
@@ -805,8 +826,11 @@ router.post('/newebpay/customer', async (req, res) => {
 
     res.redirect(`${frontendUrl}/payment/result?${params.toString()}`);
   } catch (err) {
-    console.error('[newebpay customer] 解析失敗:', err.message);
-    res.redirect(`${frontendUrl}/payment/result?status=pending&orderNo=&message=${encodeURIComponent('取號成功，請至超商繳費')}`);
+    console.error('[newebpay customer] parseTradeInfo 失敗:', err.message);
+    // 解密失敗仍導向 pending，讓使用者知道取號成功需去繳費
+    res.redirect(
+      `${frontendUrl}/payment/result?status=pending&paymentType=CVS&message=${encodeURIComponent('取號成功，請持代碼至超商繳費')}`
+    );
   }
 });
 
