@@ -48,6 +48,9 @@ const PORT = process.env.PORT || 2000;
 // 中介層設定
 // ========================================
 
+// Heroku 透過 reverse proxy 轉發請求，需信任 proxy 才能正確取得 client IP
+app.set('trust proxy', 1);
+
 // 安全性
 app.use(helmet({
   contentSecurityPolicy: {
