@@ -43,7 +43,7 @@ const LINE_PAY_API_URL = LINE_PAY_ENV === 'production'
 const PLANS = {
   intermediate: {
     name: '專業會員方案',
-    price: 30, // TODO: 測試完改回 299
+    price: 1, // TODO: 測試完改回 299
     duration: '30 天',
     durationDays: 30,
     analyses: 30,
