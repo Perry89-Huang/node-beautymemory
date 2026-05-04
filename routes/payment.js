@@ -537,16 +537,19 @@ function newebpayAesEncrypt(data) {
   return encrypted;
 }
 
-// AES-256-CBC 解密
+// AES-256-CBC 解密（藍新使用非標準 padding，需關掉 auto-padding 後手動移除）
 function newebpayAesDecrypt(data) {
   const decipher = crypto.createDecipheriv(
     'aes-256-cbc',
     Buffer.from(NEWEBPAY_HASH_KEY, 'utf8'),
     Buffer.from(NEWEBPAY_HASH_IV, 'utf8')
   );
-  let decrypted = decipher.update(data, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  decipher.setAutoPadding(false);
+  const raw = Buffer.concat([decipher.update(Buffer.from(data, 'hex')), decipher.final()]);
+  const padByte = raw[raw.length - 1];
+  let padLen = 0;
+  for (let i = raw.length - 1; i >= 0 && raw[i] === padByte; i--) padLen++;
+  return raw.slice(0, raw.length - padLen).toString('utf8');
 }
 
 // SHA-256 雜湊產生 TradeSha
@@ -838,10 +841,6 @@ router.post('/newebpay/customer', async (req, res) => {
       `${frontendUrl}/payment/result?status=pending&paymentType=CVS&message=${encodeURIComponent('取號成功，請持代碼至超商繳費')}`
     );
   }
-
-  console.log('[newebpay customer] KEY:', NEWEBPAY_HASH_KEY?.substring(0, 4), '...', NEWEBPAY_HASH_KEY?.slice(-4), 'len:', NEWEBPAY_HASH_KEY?.length);
-  console.log('[newebpay customer] IV:', NEWEBPAY_HASH_IV?.substring(0, 4), '...', NEWEBPAY_HASH_IV?.slice(-4), 'len:', NEWEBPAY_HASH_IV?.length);
-  console.log('[newebpay customer] TradeInfo len:', TradeInfo?.length, 'full:', TradeInfo);
 
   try {
     const tradeData = parseTradeInfo(TradeInfo);
