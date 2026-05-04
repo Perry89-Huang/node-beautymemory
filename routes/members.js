@@ -801,18 +801,25 @@ router.get('/quota', authenticateToken, async (req, res) => {
     const profile = userData.user_profiles[0];
     const isUnlimited = profile.subscription_type === 'enterprise';
 
+    const isExpired = profile.subscription_end && new Date(profile.subscription_end) < new Date();
+    const memberLevel = isExpired ? 'beginner' : (profile.member_level || 'beginner');
+    const remaining = isExpired ? 0 : (isUnlimited ? -1 : profile.remaining_analyses);
+
     res.json({
       success: true,
       data: {
-        memberLevel: profile.member_level || 'beginner',
-        remaining: isUnlimited ? -1 : profile.remaining_analyses,
+        memberLevel,
+        remaining,
         total: profile.total_analyses,
         subscriptionType: profile.subscription_type,
         subscriptionEnd: profile.subscription_end,
-        unlimited: isUnlimited,
-        message: isUnlimited 
-          ? '企業版會員享有無限次分析'
-          : `剩餘 ${profile.remaining_analyses} 次分析機會`
+        unlimited: !isExpired && isUnlimited,
+        expired: isExpired || false,
+        message: isExpired
+          ? '訂閱已到期，請續訂以繼續使用'
+          : isUnlimited
+            ? '企業版會員享有無限次分析'
+            : `剩餘 ${profile.remaining_analyses} 次分析機會`
       }
     });
 

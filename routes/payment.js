@@ -171,7 +171,7 @@ router.post('/linepay/request', authenticateToken, async (req, res) => {
               plan_id: planId,
               amount: plan.price,
               currency: 'TWD',
-              transaction_id: response.data.info.transactionId,
+              transaction_id: String(response.data.info.transactionId),
               line_pay_order_id: orderId,
               status: 'pending',
               plan_name: plan.name,
@@ -284,9 +284,29 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
 
       // LINE Pay confirmed – create order + upgrade member
       const now = new Date().toISOString();
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + recoveryPlan.durationDays);
       const recoveryOrderId = orderId; // keep the original LINE Pay orderId
+
+      // 查詢現有訂閱狀態
+      const recProfileQuery = `
+        query GetProfile($userId: uuid!) {
+          user_profiles(where: { user_id: { _eq: $userId } }) {
+            member_level
+            subscription_end
+            remaining_analyses
+          }
+        }
+      `;
+      const { data: recProfileData } = await graphqlRequest(recProfileQuery, { userId });
+      const recProfile = recProfileData?.user_profiles?.[0];
+      const recCurrentEnd = recProfile?.subscription_end ? new Date(recProfile.subscription_end) : null;
+      const recIsActive = recCurrentEnd && recCurrentEnd > new Date() && recProfile.member_level === 'intermediate';
+
+      const recBaseDate = recIsActive ? recCurrentEnd : new Date();
+      const expiresAt = new Date(recBaseDate);
+      expiresAt.setDate(expiresAt.getDate() + recoveryPlan.durationDays);
+      const recNewRemaining = recIsActive
+        ? (recProfile.remaining_analyses || 0) + recoveryPlan.analyses
+        : recoveryPlan.analyses;
 
       try {
         const insertOrderMutation = `
@@ -300,7 +320,7 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
             plan_id: 'intermediate',
             amount: recoveryPlan.price,
             currency: 'TWD',
-            transaction_id: transactionId,
+            transaction_id: String(transactionId),
             line_pay_order_id: recoveryOrderId,
             status: 'completed',
             plan_name: recoveryPlan.name,
@@ -315,17 +335,15 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
             update_user_profiles(where: {user_id: {_eq: $userId}}, _set: $updates) { affected_rows }
           }
         `;
-        await graphqlRequest(updateMemberMutation, {
-          userId,
-          updates: {
-            member_level: 'intermediate',
-            subscription_end: expiresAt.toISOString(),
-            subscription_start: now,
-            total_analyses: recoveryPlan.analyses,
-            remaining_analyses: recoveryPlan.analyses
-          }
-        });
-        console.log('[recovery] Order created and member upgraded for userId:', userId);
+        const recUpdates = {
+          member_level: 'intermediate',
+          subscription_end: expiresAt.toISOString(),
+          total_analyses: recoveryPlan.analyses,
+          remaining_analyses: recNewRemaining
+        };
+        if (!recIsActive) recUpdates.subscription_start = now;
+        await graphqlRequest(updateMemberMutation, { userId, updates: recUpdates });
+        console.log(`[recovery] Order created and member ${recIsActive ? 'extended' : 'upgraded'} for userId:`, userId);
       } catch (dbErr) {
         console.error('[recovery] DB update failed:', dbErr.message);
       }
@@ -385,10 +403,31 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
       // 付款成功，更新訂單狀態和會員等級
       const plan = PLANS[order.plan_id];
       const now = new Date().toISOString();
-      
-      // 計算會員到期日
-      const expiresAt = new Date();
+
+      // 查詢現有訂閱狀態，判斷是新訂還是延長
+      const profileQuery = `
+        query GetProfile($userId: uuid!) {
+          user_profiles(where: { user_id: { _eq: $userId } }) {
+            member_level
+            subscription_end
+            remaining_analyses
+          }
+        }
+      `;
+      const { data: profileData } = await graphqlRequest(profileQuery, { userId });
+      const currentProfile = profileData?.user_profiles?.[0];
+      const currentEnd = currentProfile?.subscription_end ? new Date(currentProfile.subscription_end) : null;
+      const isActive = currentEnd && currentEnd > new Date() && currentProfile.member_level === 'intermediate';
+
+      // 延長：從現有到期日加；新訂：從今天加
+      const baseDate = isActive ? currentEnd : new Date();
+      const expiresAt = new Date(baseDate);
       expiresAt.setDate(expiresAt.getDate() + plan.durationDays);
+
+      // 次數：延長則累加，新訂則重置
+      const newRemaining = isActive
+        ? (currentProfile.remaining_analyses || 0) + plan.analyses
+        : plan.analyses;
 
       try {
         // 1. 更新訂單狀態
@@ -426,19 +465,20 @@ router.post('/linepay/confirm', authenticateToken, async (req, res) => {
         `;
 
         const memberUpdates = {
-          member_level: order.plan_id,
+          member_level: 'intermediate',
           subscription_end: expiresAt.toISOString(),
-          subscription_start: now,
+          subscription_start: isActive ? undefined : now,
           total_analyses: plan.analyses,
-          remaining_analyses: plan.analyses
+          remaining_analyses: newRemaining
         };
+        if (isActive) delete memberUpdates.subscription_start;
 
         const memberResult = await graphqlRequest(updateMemberMutation, {
           userId: userId,
           updates: memberUpdates
         });
 
-        console.log('會員升級成功:', memberResult.data);
+        console.log(isActive ? '會員延長成功:' : '會員升級成功:', memberResult.data);
 
       } catch (dbError) {
         console.error('更新資料庫失敗:', dbError);
