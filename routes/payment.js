@@ -839,6 +839,10 @@ router.post('/newebpay/customer', async (req, res) => {
     );
   }
 
+  console.log('[newebpay customer] KEY:', NEWEBPAY_HASH_KEY?.substring(0, 4), '...', NEWEBPAY_HASH_KEY?.slice(-4), 'len:', NEWEBPAY_HASH_KEY?.length);
+  console.log('[newebpay customer] IV:', NEWEBPAY_HASH_IV?.substring(0, 4), '...', NEWEBPAY_HASH_IV?.slice(-4), 'len:', NEWEBPAY_HASH_IV?.length);
+  console.log('[newebpay customer] TradeInfo len:', TradeInfo?.length, 'full:', TradeInfo);
+
   try {
     const tradeData = parseTradeInfo(TradeInfo);
     const result = tradeData.Result || tradeData;
