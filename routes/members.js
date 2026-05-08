@@ -148,6 +148,7 @@ router.post('/register', async (req, res) => {
           remainingAnalyses: user.user_profile?.remaining_analyses || 3
         },
         accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
         welcomeBonus: {
           freeAnalyses: 3,
           message: '恭喜獲得 3 次免費 AI 肌膚檢測!'
